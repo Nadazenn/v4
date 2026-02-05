@@ -401,6 +401,10 @@ elif menu == "Données":
             gb.configure_pagination(enabled=True)
             gb.configure_default_column(editable=True, wrapText=True, autoHeight=True)
 
+            for col_name in ["Quantité", "Quantite", "Prix unitaire", "Prix Unitaire"]:
+                if col_name in df_base.columns:
+                    gb.configure_column(col_name, hide=True)
+
             if "Catégorie Prédite" in df_base.columns:
                 lot_actuel = params["lot"]
                 try:
@@ -479,7 +483,7 @@ elif menu == "Données":
 elif menu == "Pilotage Excel":
     st.header("Pilotage Excel")
 
-    st.subheader("Feuille Donnees")
+    st.subheader("Feuille Données")
 
     params = st.session_state.get("parametrage", None)
     if not params:
@@ -505,10 +509,12 @@ elif menu == "Pilotage Excel":
         )
 
     df_donnees = st.session_state["pilotage"]["donnees_grid"]
+    df_display = df_donnees.astype(str)
     edited_donnees = st.data_editor(
-        df_donnees,
+        df_display,
         use_container_width=True,
         num_rows="dynamic",
+        disabled=False,
         key="donnees_editor"
     )
 
