@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from datetime import date, datetime
 import os
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
@@ -37,6 +38,15 @@ st.markdown("""
 Cet outil est une **première version de test**.  
 Les fonctionnalités sont en cours de développement et peuvent évoluer.
 """)
+
+
+def _format_date_fr(value):
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%d/%m/%Y")
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
 
 # Menu principal
 menu = st.sidebar.radio(
@@ -264,7 +274,38 @@ elif menu == "Données":
     )
 
     
-    #  MODE B — Télécharger → Modifier dans Excel → Ré-uploader 
+    
+
+    if "donnees_page" not in st.session_state:
+        st.session_state["donnees_page"] = {}
+    d = st.session_state["donnees_page"]
+
+    st.subheader("DPGF ")
+    if st.button("Insérer un indice DPGF"):
+        d["show_popup_dpgf"] = True
+
+    if d.get("show_popup_dpgf", False):
+        d["dpgf_indice"] = st.text_input(
+            "Indiquez l'indice du DPGF :",
+            value=d.get("dpgf_indice", "")
+        )
+        if d["dpgf_indice"]:
+            st.success(f"Indice DPGF enregistré : {d['dpgf_indice']}")
+            d["show_popup_dpgf"] = False
+
+    dpgf_date_default = d.get("dpgf_date", None)
+    if isinstance(dpgf_date_default, str) and dpgf_date_default:
+        try:
+            dpgf_date_default = datetime.strptime(dpgf_date_default, "%d/%m/%Y").date()
+        except Exception:
+            dpgf_date_default = None
+    if dpgf_date_default is None:
+        dpgf_date_default = date.today()
+
+    d["dpgf_date"] = st.date_input("Date du DPGF (JJ/MM/AAAA) :", value=dpgf_date_default)
+    st.session_state["dpgf_indice"] = d.get("dpgf_indice", "")
+    st.session_state["dpgf_date"] = d.get("dpgf_date")
+#  MODE B — Télécharger → Modifier dans Excel → Ré-uploader 
     
     if mode == "Télécharger et ré-uploader après modification":
 
@@ -1496,10 +1537,10 @@ elif menu == "Dashboard":
         else []
     )
 
-    # DPGF + indice planning depuis la session
-    dpgf_date = st.session_state.get("dpgf_date", "")
-    dpgf_date = st.text_input("Date du DPGF :", value=dpgf_date)
-    st.session_state["dpgf_date"] = dpgf_date
+    # DPGF + indice depuis Donn?es
+    dpgf_date = st.session_state.get("dpgf_date", None)
+    dpgf_indice = st.session_state.get("dpgf_indice", "")
+    dpgf_date_str = _format_date_fr(dpgf_date)
     planning_indice = st.session_state.get("parametrage", {}).get("planning_indice", "")
 
     # 4) Gestion des variantes (initialisation)
@@ -1543,12 +1584,12 @@ elif menu == "Dashboard":
 
                 st.markdown("#### Document de source")
 
-                if dpgf_date and planning_indice:
-                    default_dpgf_v1 = f"DPGF du {dpgf_date} – Indice {planning_indice}"
-                elif dpgf_date:
-                    default_dpgf_v1 = f"DPGF du {dpgf_date}"
-                elif planning_indice:
-                    default_dpgf_v1 = f"Indice {planning_indice}"
+                if dpgf_date_str and dpgf_indice:
+                    default_dpgf_v1 = f"DPGF indice {dpgf_indice} du {dpgf_date_str}"
+                elif dpgf_date_str:
+                    default_dpgf_v1 = f"DPGF du {dpgf_date_str}"
+                elif dpgf_indice:
+                    default_dpgf_v1 = f"DPGF indice {dpgf_indice}"
                 else:
                     default_dpgf_v1 = ""
 
@@ -1556,7 +1597,7 @@ elif menu == "Dashboard":
                     "DPGF + Indice :",
                     value=default_dpgf_v1,
                     key="dpgf_v1",
-                    placeholder="DPGF du … – Indice …",
+                    placeholder="DPGF indice ? du ?",
                 )
 
                 pic_file_v1 = st.file_uploader(
@@ -1564,6 +1605,10 @@ elif menu == "Dashboard":
                 )
 
                 st.markdown("---")
+
+                st.markdown(
+                    f"- DPGF indice : **{dpgf_indice or '...'}** du **{dpgf_date_str or '...'}**"
+                )
 
                 st.markdown("#### Hypothèse planning")
                 st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
@@ -1995,12 +2040,12 @@ elif menu == "Dashboard":
                 st.markdown("### 📘 Document de source : DPGF + Indice + PIC")
 
                 # Pré-remplissage DPGF + Indice à partir de dpgf_date et planning_indice
-                if dpgf_date and planning_indice:
-                    default_dpgf = f"DPGF du {dpgf_date} – Indice {planning_indice}"
-                elif dpgf_date:
-                    default_dpgf = f"DPGF du {dpgf_date}"
-                elif planning_indice:
-                    default_dpgf = f"Indice {planning_indice}"
+                if dpgf_date_str and dpgf_indice:
+                    default_dpgf = f"DPGF indice {dpgf_indice} du {dpgf_date_str}"
+                elif dpgf_date_str:
+                    default_dpgf = f"DPGF du {dpgf_date_str}"
+                elif dpgf_indice:
+                    default_dpgf = f"DPGF indice {dpgf_indice}"
                 else:
                     default_dpgf = ""
 
@@ -2008,7 +2053,7 @@ elif menu == "Dashboard":
                     "DPGF + Indice :",
                     value=default_dpgf,
                     key="dpgf_v0",
-                    placeholder="DPGF du … – Indice …"
+                    placeholder="DPGF indice ? du ?"
                 )
 
                 st.file_uploader("Veuillez joindre le fichier PIC", key="pic_v0")
