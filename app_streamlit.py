@@ -104,6 +104,16 @@ if menu == "Paramétrage":
     with col3:
         p["numero_etage_inf"] = st.number_input("Numéro étage inférieur", value=p.get("numero_etage_inf", 0))
 
+    # --- Étages / Zones ---
+    st.subheader("Étages / Zones")
+    if st.button("Valider Étages / Zones"):
+        df1 = pa.generate_table(p["nombre_etages"], p["zones_par_etage_defaut"], p["numero_etage_inf"])
+        p["output_table"] = df1
+        st.success("✅ Étages / Zones générés")
+
+    if "output_table" in p:
+        st.dataframe(p["output_table"], use_container_width=True)
+
     # --- Planning ---
     st.subheader("Planning")
     if st.button("➕ Insérer un indice de planning"):
@@ -140,10 +150,47 @@ if menu == "Paramétrage":
     with col3:
         p["duree_termmoyen_paretage"] = st.number_input("Durée moyenne Terminaux (jours)", min_value=0, value=p.get("duree_termmoyen_paretage", 30))
 
+    # --- Planning détaillé ---
+    if "output_table" in p:
+        if st.button("Créer le planning détaillé"):
+            etages_zones = p["output_table"]["Numéro étage (pas de lettres)"].tolist()
+            zones_per_etage = p["output_table"]["Nombre de zones"].tolist()
+            df2 = pa.generate_details_table(
+                etages_zones, zones_per_etage,
+                p["delai_livraison"], p["date_debut_prod"], p["date_debut_term"],
+                p["intervalle_par_etage"],
+                p["duree_prodmoyen_paretage"], p["duree_termmoyen_paretage"]
+            )
+            p["output_details_table"] = df2
+            st.success("✅ Planning généré")
+
+    # --- Tableau Détails (modifiable) ---
+    if "output_details_table" in p:
+        st.subheader("🗓️ Tableau Détails (modifiable)")
+        df_base = p["output_details_table"]
+
+        gb = GridOptionsBuilder.from_dataframe(df_base)
+        gb.configure_pagination(enabled=True)
+        gb.configure_default_column(editable=True, wrapText=True, autoHeight=True)
+        grid_options = gb.build()
+
+        grid_response = AgGrid(
+            df_base,
+            gridOptions=grid_options,
+            data_return_mode='AS_INPUT',
+            update_mode=GridUpdateMode.NO_UPDATE,
+            fit_columns_on_grid_load=True,
+            allow_unsafe_jscode=True,
+            key="planning_grid"
+        )
+
+        if st.button("💾 Enregistrer le planning"):
+            p["output_details_table"] = pd.DataFrame(grid_response["data"])
+            st.success("✅ Planning enregistré avec succès")
+
     # --- CCC ---
     # --- Activation CCC ---
     st.subheader("Utilisation de la CCC")
-
     use_ccc = st.radio(
         "Souhaitez-vous utiliser une CCC ?",
         ["Oui", "Non"],
@@ -181,80 +228,36 @@ if menu == "Paramétrage":
     st.image("images/conditionnements.png", caption="Conditionnements disponibles")
     p["choix_conditionnement"] = st.multiselect("Sélectionner les conditionnements possibles", daba.liste_conditionnement, default=p.get("choix_conditionnement", daba.liste_conditionnement))
 
-    # --- Étape 1 : Génération Étages / Zones ---
-    if st.button("Valider Étages / Zones"):
-        df1 = pa.generate_table(p["nombre_etages"], p["zones_par_etage_defaut"], p["numero_etage_inf"])
-        p["output_table"] = df1
-        st.success("✅ Étages / Zones générés")
+    # --- Validation finale ---
+    if st.button("✅ Valider le paramétrage"):
 
-    if "output_table" in p:
-        st.dataframe(p["output_table"], use_container_width=True)
+        df_final = p["output_details_table"]
+        _, msg = pa.validate_parametrage()
 
-        if st.button("Créer le planning détaillé"):
-            etages_zones = p["output_table"]["Numéro étage (pas de lettres)"].tolist()
-            zones_per_etage = p["output_table"]["Nombre de zones"].tolist()
-            df2 = pa.generate_details_table(
-                etages_zones, zones_per_etage,
-                p["delai_livraison"], p["date_debut_prod"], p["date_debut_term"],
-                p["intervalle_par_etage"],
-                p["duree_prodmoyen_paretage"], p["duree_termmoyen_paretage"]
-            )
-            p["output_details_table"] = df2
-            st.success("✅ Planning généré")
+        st.session_state["parametrage"] = {
+            "entreprise": p["entreprise_choice"],
+            "lot": p["model_choice"],
+            "nombre_etages": p["nombre_etages"],
+            "duree_stockage": p["duree_stockage"],
+            "tarif_stockage": p["tarif_stockage"],
+            "frais_palette": p["frais_palette"],
+            "frais_livraison": p["frais_livraison"],
+            "df1": p.get("output_table"),
+            "param_details": df_final,
+            "camions": p["choix_camions"],
+            "conditionnements": p["choix_conditionnement"],
+            "date_debut_prod": p["date_debut_prod"],
+            "date_debut_term": p["date_debut_term"],
+            "intervalle_par_etage": p["intervalle_par_etage"],
+            "delai_livraison": p["delai_livraison"],
+            "duree_prodmoyen_paretage": p["duree_prodmoyen_paretage"],
+            "duree_termmoyen_paretage": p["duree_termmoyen_paretage"],
+            "planning_indice": p.get("planning_indice", ""),
+            "use_ccc": p.get("use_ccc", False)
 
-    # --- Étape 2 : Tableau Détails (modifiable) ---
-    if "output_details_table" in p:
-        st.subheader("🗓️ Tableau Détails (modifiable)")
-        df_base = p["output_details_table"]
+        }
 
-        gb = GridOptionsBuilder.from_dataframe(df_base)
-        gb.configure_pagination(enabled=True)
-        gb.configure_default_column(editable=True, wrapText=True, autoHeight=True)
-        grid_options = gb.build()
-
-        grid_response = AgGrid(
-            df_base,
-            gridOptions=grid_options,
-            data_return_mode='AS_INPUT',
-            update_mode=GridUpdateMode.NO_UPDATE,
-            fit_columns_on_grid_load=True,
-            allow_unsafe_jscode=True,
-            key="planning_grid"
-        )
-
-        if st.button("💾 Enregistrer le planning"):
-            p["output_details_table"] = pd.DataFrame(grid_response["data"])
-            st.success("✅ Planning enregistré avec succès")
-
-        if st.button("✅ Valider le paramétrage"):
-
-            df_final = p["output_details_table"]
-            _, msg = pa.validate_parametrage()
-
-            st.session_state["parametrage"] = {
-                "entreprise": p["entreprise_choice"],
-                "lot": p["model_choice"],
-                "nombre_etages": p["nombre_etages"],
-                "duree_stockage": p["duree_stockage"],
-                "tarif_stockage": p["tarif_stockage"],
-                "frais_palette": p["frais_palette"],
-                "frais_livraison": p["frais_livraison"],
-                "df1": p.get("output_table"),
-                "param_details": df_final,
-                "camions": p["choix_camions"],
-                "conditionnements": p["choix_conditionnement"],
-                "date_debut_prod": p["date_debut_prod"],
-                "date_debut_term": p["date_debut_term"],
-                "intervalle_par_etage": p["intervalle_par_etage"],
-                "delai_livraison": p["delai_livraison"],
-                "duree_prodmoyen_paretage": p["duree_prodmoyen_paretage"],
-                "duree_termmoyen_paretage": p["duree_termmoyen_paretage"],
-                "planning_indice": p.get("planning_indice", ""),
-                "use_ccc": p.get("use_ccc", False)
-
-            }
-
-            st.success(msg)
+        st.success(msg)
 
 # Onglet 2 : Données
 elif menu == "Données":
