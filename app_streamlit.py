@@ -62,21 +62,35 @@ if menu == "Paramétrage":
         st.session_state["parametrage_page"] = {}
     p = st.session_state["parametrage_page"]
 
+    def _param_number_input(label, key, default, **kwargs):
+        state_key = f"param_{key}"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = p.get(key, default)
+        if kwargs.get("format") == "%d":
+            st.session_state[state_key] = int(round(float(st.session_state[state_key])))
+        val = st.number_input(label, key=state_key, **kwargs)
+        p[key] = val
+        return val
+
     # --- Explication générale ---
 
     # --- Sélections principales ---
     entreprises = [f.replace("_logo.png", "") for f in os.listdir("images/logos_entreprises") if f.endswith(".png")]
+    if "Choix entreprise" not in entreprises:
+        entreprises.insert(0, "Choix entreprise")
     # Modèles disponibles
     models = [m.replace(".pkl", "") for m in os.listdir("models") if m.endswith(".pkl")]
 
     # Ajouter le modèle global
     if "GLOBAL" not in models:
         models.insert(0, "GLOBAL")
+    if "Choix lot" not in models:
+        models.insert(0, "Choix lot")
 
     p["entreprise_choice"] = st.selectbox(
         "Sélectionnez votre entreprise",
         entreprises,
-        index=entreprises.index(p.get("entreprise_choice")) if "entreprise_choice" in p else 0,
+        index=entreprises.index(p.get("entreprise_choice")) if "entreprise_choice" in p and p.get("entreprise_choice") in entreprises else 0,
     )
 
     # Modèles disponibles
@@ -85,6 +99,8 @@ if menu == "Paramétrage":
     # Ajouter le modèle global
     if "GLOBAL" not in models:
         models.insert(0, "GLOBAL")
+    if "Choix lot" not in models:
+        models.insert(0, "Choix lot")
 
     p["model_choice"] = st.selectbox(
         "Sélectionnez le modèle (GLOBAL ou spécifique)",
@@ -98,11 +114,11 @@ if menu == "Paramétrage":
     st.subheader("Caractéristiques du bâtiment")
     col1, col2, col3 = st.columns(3)
     with col1:
-        p["nombre_etages"] = st.number_input("Nombre d'étages", min_value=1, value=p.get("nombre_etages", 1))
+        _param_number_input("Nombre détages", "nombre_etages", 1, min_value=1, step=1, format="%d")
     with col2:
-        p["zones_par_etage_defaut"] = st.number_input("Zones par étage par défaut", min_value=1, value=p.get("zones_par_etage_defaut", 1))
+        _param_number_input("Zones par étage par défaut", "zones_par_etage_defaut", 1, min_value=1, step=1, format="%d")
     with col3:
-        p["numero_etage_inf"] = st.number_input("Numéro étage inférieur", value=p.get("numero_etage_inf", 0))
+        _param_number_input("Numéro étage inférieur", "numero_etage_inf", 0, step=1, format="%d")
 
     # --- Étages / Zones ---
     st.subheader("Étages / Zones")
@@ -140,15 +156,15 @@ if menu == "Paramétrage":
     with col2:
         p["date_debut_term"] = st.text_input("Début Terminaux (JJ/MM/AAAA)", p.get("date_debut_term", "01/05/2025"))
     with col3:
-        p["intervalle_par_etage"] = st.number_input("Intervalle entre étages (jours)", min_value=0, value=p.get("intervalle_par_etage", 14))
+        _param_number_input("Intervalle entre étages (jours)", "intervalle_par_etage", 14, min_value=0, step=1, format="%d")
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        p["delai_livraison"] = st.number_input("Délai livraison avant travaux (jours)", min_value=0, value=p.get("delai_livraison", 0))
+        _param_number_input("Délai livraison avant travaux (jours)", "delai_livraison", 0, min_value=0, step=1, format="%d")
     with col2:
-        p["duree_prodmoyen_paretage"] = st.number_input("Durée moyenne Production (jours)", min_value=0, value=p.get("duree_prodmoyen_paretage", 30))
+        _param_number_input("Durée moyenne Production (jours)", "duree_prodmoyen_paretage", 30, min_value=0, step=1, format="%d")
     with col3:
-        p["duree_termmoyen_paretage"] = st.number_input("Durée moyenne Terminaux (jours)", min_value=0, value=p.get("duree_termmoyen_paretage", 30))
+        _param_number_input("Durée moyenne Terminaux (jours)", "duree_termmoyen_paretage", 30, min_value=0, step=1, format="%d")
 
     # --- Planning détaillé ---
     if "output_table" in p:
@@ -205,23 +221,14 @@ if menu == "Paramétrage":
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            p["duree_stockage"] = st.number_input(
-                "Durée stockage (mois)", min_value=0, value=p.get("duree_stockage", 2)
-            )
+            _param_number_input("Durée stockage (mois)", "duree_stockage", 2, min_value=0, step=1, format="%d")
         with col2:
-            p["tarif_stockage"] = st.number_input(
-                "Tarif stockage (€/mois)", value=p.get("tarif_stockage", 19)
-            )
+            _param_number_input("Tarif stockage (€/mois)", "tarif_stockage", 19, min_value=0)
         with col3:
-            p["frais_palette"] = st.number_input(
-                "Frais palette (€)", value=p.get("frais_palette", 10)
-            )
+            _param_number_input("Frais palette (€)", "frais_palette", 10, min_value=0)
         with col4:
-            p["frais_livraison"] = st.number_input(
-                "Frais livraison (€)", value=p.get("frais_livraison", 175)
-            )
+            _param_number_input("Frais livraison (€)", "frais_livraison", 175, min_value=0)
 
-    # --- Logistique du chantier ---
     st.subheader("Logistique du chantier")
     st.image("images/camions.png", caption="Camions disponibles")
     p["choix_camions"] = st.multiselect("Sélectionner les camions possibles", daba.liste_camions, default=p.get("choix_camions", daba.liste_camions))
