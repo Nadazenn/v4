@@ -220,13 +220,39 @@ def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stock
 
 
 
-        for i, col_idx in enumerate([0, 2]):            
-            for j, value in enumerate(output_details_table.iloc[:, col_idx]):  
+        # Aligner le planning sur le format v3 pour l'écriture Excel
+        details_v3 = output_details_table.copy()
+        numero_col = None
+        if "Numero etage (pas de lettres)" in details_v3.columns:
+            numero_col = "Numero etage (pas de lettres)"
+            details_v3 = details_v3.drop(columns=[numero_col])
+        if "Numéro étage (pas de lettres)" in details_v3.columns:
+            numero_col = "Numéro étage (pas de lettres)"
+            details_v3 = details_v3.drop(columns=[numero_col])
+
+        expected_cols = [
+            "Étage",
+            "Zone",
+            "Nom Zone",
+            "Date début phase production",
+            "Date début phase terminaux",
+            "Délai de livraison avant travaux (jours)",
+            "Durée travaux production",
+            "Durée travaux terminaux",
+        ]
+        if all(c in details_v3.columns for c in expected_cols):
+            details_v3 = details_v3[expected_cols]
+            if numero_col is not None:
+                details_v3["Étage"] = output_details_table[numero_col].values
+
+        # En-têtes "Étage" et "Zone" : même logique que v3 (col 0 et 2)
+        for i, col_idx in enumerate([0, 2]):
+            for j, value in enumerate(details_v3.iloc[:, col_idx]):
                 cell = ws.cell(row=1 + i, column=5 + j, value=value)
-                if col_idx == 0 :
+                if col_idx == 0:
                     cell.fill = darkBlue
                     cell.font = white
-                else :
+                else:
                     cell.fill = lihtBlue
         
         cell = ws.cell(row=1, column=5 + nbzones, value="Exclus")
@@ -292,13 +318,13 @@ def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stock
                 cell.fill = lihtBlue
 
         # Coller les données du deuxième tableau
-        output_details_table['Délai de livraison avant travaux (jours)'] = pd.to_numeric(output_details_table['Délai de livraison avant travaux (jours)'], errors='coerce').fillna(0).astype(int)
-        for row_num, row in enumerate(output_details_table.itertuples(index=False), start=3):
+        details_v3['Délai de livraison avant travaux (jours)'] = pd.to_numeric(details_v3['Délai de livraison avant travaux (jours)'], errors='coerce').fillna(0).astype(int)
+        for row_num, row in enumerate(details_v3.itertuples(index=False), start=3):
             for col_num, value in enumerate(row, start=5):
                 cell = ws.cell(row=row_num, column=col_num, value=value)
                 cell.fill = lihtBlue
 
-                # Vérifier si la colonne correspond aux dates (colonnes 8 et 9 dans Excel)
+                # Vérifier si la colonne correspond aux dates (colonnes 8 et 9 dans Excel format v3)
                 if col_num in [8, 9] and isinstance(value, str):  
                     # Convertir le texte en date
                     date_value = pd.to_datetime(value, dayfirst=True).to_pydatetime()  # Convertir en datetime Python

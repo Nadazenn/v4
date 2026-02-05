@@ -304,9 +304,9 @@ Sub CreerBilanZones()
         
         
         wsBilan.Cells(nextRow, 10).Value = WorksheetFunction.SumIfs(wsSource.Range("M:M"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Production") + _
-                                                            WorksheetFunction.Index(wsSource.Range("M:M"), ligneStockCCCProd)
+                                                            stockCCCProdM
         wsBilan.Cells(nextRow + 1, 10).Value = WorksheetFunction.SumIfs(wsSource.Range("M:M"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Terminaux") + _
-                                                            WorksheetFunction.Index(wsSource.Range("M:M"), ligneStockCCCTerm)
+                                                            stockCCCTermM
         wsBilan.Cells(nextRow + 2, 10).Value = wsBilan.Cells(nextRow, 10).Value + wsBilan.Cells(nextRow + 1, 10).Value
         wsBilan.Cells(nextRow + 2, 10).Font.Bold = True
         
@@ -334,25 +334,25 @@ Sub CreerBilanZones()
         wsBilan.Cells(nextRow, 12).Value = WorksheetFunction.RoundUp(( _
                                                             WorksheetFunction.SumIfs(wsSource.Range("O:O"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Production") + _
                                                             WorksheetFunction.SumIfs(wsSource.Range("N:N"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Production") + _
-                                                            wsSource.Range("O" & ligneStockCCCProd).Value + _
-                                                            wsSource.Range("N" & ligneStockCCCProd).Value) / ( _
+                                                            stockCCCProdO + _
+                                                            stockCCCProdN) / ( _
                                                             WorksheetFunction.SumIfs(wsSource.Range("M:M"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Production") + _
-                                                            wsSource.Range("M" & ligneStockCCCProd).Value _
+                                                            stockCCCProdM _
                                                            ), 2)
                                                            
         ' Calcul du dénominateur
         denominator = WorksheetFunction.SumIfs(wsSource.Range("M:M"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Terminaux") + _
-              wsSource.Range("M" & ligneStockCCCTerm).Value
+              stockCCCTermM
         If denominateur = 0 Then
             wsBilan.Cells(nextRow + 1, 12).Value = 0
         Else
             wsBilan.Cells(nextRow + 1, 12).Value = WorksheetFunction.RoundUp(( _
                                                             WorksheetFunction.SumIfs(wsSource.Range("O:O"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Terminaux") + _
                                                             WorksheetFunction.SumIfs(wsSource.Range("N:N"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Terminaux") + _
-                                                            wsSource.Range("O" & ligneStockCCCTerm).Value + _
-                                                            wsSource.Range("N" & ligneStockCCCTerm).Value) / ( _
+                                                            stockCCCTermO + _
+                                                            stockCCCTermN) / ( _
                                                             WorksheetFunction.SumIfs(wsSource.Range("M:M"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non", wsSource.Range("D:D"), "Terminaux") + _
-                                                            wsSource.Range("M" & ligneStockCCCTerm).Value _
+                                                            stockCCCTermM _
                                                             ), 2)
         End If
         
@@ -360,13 +360,13 @@ Sub CreerBilanZones()
         wsBilan.Cells(nextRow + 2, 12).Value = WorksheetFunction.RoundUp(( _
                                                             WorksheetFunction.SumIfs(wsSource.Range("O:O"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non") + _
                                                             WorksheetFunction.SumIfs(wsSource.Range("N:N"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non") + _
-                                                            wsSource.Range("O" & ligneStockCCCProd).Value + _
-                                                            wsSource.Range("O" & ligneStockCCCTerm).Value + _
-                                                            wsSource.Range("N" & ligneStockCCCProd).Value + _
-                                                            wsSource.Range("N" & ligneStockCCCTerm).Value) / ( _
+                                                            stockCCCProdO + _
+                                                            stockCCCTermO + _
+                                                            stockCCCProdN + _
+                                                            stockCCCTermN) / ( _
                                                             WorksheetFunction.SumIfs(wsSource.Range("M:M"), wsSource.Range("A:A"), etage, wsSource.Range("B:B"), zone, wsSource.Range("P:P"), "Non") + _
-                                                            wsSource.Range("M" & ligneStockCCCProd).Value + _
-                                                            wsSource.Range("M" & ligneStockCCCTerm).Value _
+                                                            stockCCCProdM + _
+                                                            stockCCCTermM _
                                                             ), 2)
         wsBilan.Cells(nextRow + 2, 12).Font.Bold = True
     

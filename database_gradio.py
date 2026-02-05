@@ -26,7 +26,7 @@ def afficher_donnees(table, model_choice):
     return df
 
 # Fonction pour enregistrer les modifications
-def enregistrer_modifications(table, df_modifie, lot_choice=None):
+def enregistrer_modifications(table, df_modifie):
     table = nom_table (table)
     conn = sqlite3.connect("logistique.db", check_same_thread=False)
     
@@ -50,26 +50,8 @@ def enregistrer_modifications(table, df_modifie, lot_choice=None):
         df_modifie['capacite_m3'] = pd.to_numeric(df_modifie['capacite_m3'], errors='coerce')
         df_modifie['capacite_kg'] = pd.to_numeric(df_modifie['capacite_kg'], errors='coerce')
         df_modifie['cout'] = pd.to_numeric(df_modifie['cout'], errors='coerce')
-    # Nettoyage de base pour éviter l'insertion de lignes vides
-    if "nom" in df_modifie.columns:
-        df_modifie = df_modifie[df_modifie["nom"].astype(str).str.strip() != ""]
-
     # Supprimer les anciennes lignes qui existent déjà dans la base
-    if table == "materiel":
-        if lot_choice:
-            if "lot" in df_modifie.columns:
-                df_modifie["lot"] = df_modifie["lot"].fillna(lot_choice)
-            else:
-                df_modifie["lot"] = lot_choice
-            df_base = df_base[df_base["lot"] != lot_choice]
-        elif "lot" in df_modifie.columns and "lot" in df_base.columns:
-            lot_values = df_modifie["lot"].dropna().unique().tolist()
-            if lot_values:
-                df_base = df_base[~df_base["lot"].isin(lot_values)]
-        else:
-            df_base = df_base[~df_base[clé_unique].isin(df_modifie[clé_unique])]
-    else:
-        df_base = df_base[~df_base[clé_unique].isin(df_modifie[clé_unique])]
+    df_base = df_base[~df_base[clé_unique].isin(df_modifie[clé_unique])]
 
     # Ajouter les nouvelles données mises à jour
     df_final = pd.concat([df_base, df_modifie]).reset_index(drop=True)

@@ -2,9 +2,9 @@ import pandas as pd
 import string
 
 
-# ==========================================================
+#
 #  Générer le premier tableau (étages / zones)
-# ==========================================================
+#
 def generate_table(nombre_etages, zones_par_etage_defaut, numero_etage_inf):
     """Crée le tableau des étages et du nombre de zones par étage."""
     num_etages = [numero_etage_inf + i for i in range(nombre_etages)]
@@ -18,9 +18,9 @@ def generate_table(nombre_etages, zones_par_etage_defaut, numero_etage_inf):
     return df
 
 
-# ==========================================================
+#
 # Générer le tableau détaillé (planning complet)
-# ==========================================================
+#
 def generate_details_table(
     etages_zones,
     zones_per_etage,
@@ -33,14 +33,16 @@ def generate_details_table(
 ):
     """Crée le tableau détaillé du planning (production et terminaux)."""
     rows = []
+    numero_etages_list = []  # Pour stocker les numéros d'étage de chaque ligne
     current_date_prod = pd.to_datetime(date_debut_prod, dayfirst=True)
     current_date_term = pd.to_datetime(date_debut_term, dayfirst=True)
 
-    for etage, zones in zip(etages_zones, zones_per_etage):
+    for etage_num, zones in zip(etages_zones, zones_per_etage):
         for i in range(zones):
             zone_letter = string.ascii_uppercase[i % 26]
             row = [
-                etage,
+                f"Étage {etages_zones.index(etage_num) + 1}",
+                etage_num,  # Numéro étage (pas de lettres)
                 f"Zone {i + 1}",
                 zone_letter,
                 current_date_prod.strftime("%d/%m/%Y"),
@@ -55,6 +57,7 @@ def generate_details_table(
 
     columns = [
         "Étage",
+        "Numero etage (pas de lettres)",
         "Zone",
         "Nom Zone",
         "Date début phase production",
@@ -66,12 +69,13 @@ def generate_details_table(
 
     df = pd.DataFrame(rows, columns=columns)
     df = df.fillna("")
+    
     return df
 
 
-# ==========================================================
+#
 #  Validation du paramétrage
-# ==========================================================
+#
 def validate_parametrage():
     """Retourne un message de validation pour l'étape suivante."""
     return True, "Le paramétrage est terminé, vous pouvez passer à l'onglet Données."
