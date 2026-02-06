@@ -1,87 +1,8 @@
-import xlwings as xw
+
 import pandas as pd
 import unicodedata
 import database as daba
 
-def get_workbook(path="sortie/fichier_pilotage.xlsm"):
-    # Excel reste visible pour que tu voies les modifs
-    return xw.Book(path)
-
-def lire_feuille(sheet_name, path="sortie/fichier_pilotage.xlsm"):
-    wb = get_workbook(path)
-    try:
-        sht = wb.sheets[sheet_name]
-    except:
-        return pd.DataFrame()
-
-
-    used = sht.used_range
-    values = used.value
-
-    if not values:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(values)
-
-    if sheet_name == "Données":
-        # Forcer colonnes en 1, 2, 3 ...
-        df.columns = [str(i+1) for i in range(df.shape[1])]
-        #  Remplacer None par "" et tout convertir en string
-        df = df.fillna("").astype(str)
-    else:
-        df.columns = df.iloc[0]
-        df = df.drop(index=0).reset_index(drop=True)
-        df = df.fillna("")
-
-    return df
-
-
-def ecrire_feuille(sheet_name, df, path="sortie/fichier_pilotage.xlsm"):
-    wb = get_workbook(path)
-    sht = wb.sheets[sheet_name]
-    sht.clear_contents()
-
-    if sheet_name == "Données":
-        # On écrit sans entêtes
-        sht.range("A1").value = df.fillna("").values.tolist()
-    else:
-        # On écrit avec entêtes
-        sht.range("A1").value = [df.columns.tolist()] + df.fillna("").values.tolist()
-
-    wb.save()
-
-def creer_tableau_source(path="sortie/fichier_pilotage.xlsm"):
-    wb = get_workbook(path)
-    wb.macro("CreerTableauSource")()
-    wb.save()
-
-def creer_bilan(path="sortie/fichier_pilotage.xlsm"):
-    wb = get_workbook(path)
-    wb.macro("CreerBilan")()
-    wb.save()
-
-def creer_bilan_zones(path="sortie/fichier_pilotage.xlsm"):
-    try:
-        wb = get_workbook(path)
-        macro = wb.macro("CreerBilanZones")  # ⚠️ nom exact de la macro
-        macro()
-        wb.save()
-        return "Macro 'CreerBilanZones' exécutée avec succès ✅"
-    except Exception as e:
-        return f"Erreur exécution macro : {e}"
-    
-def lancer_macro_bilan(path="sortie/fichier_pilotage.xlsm"):
-    """
-    Lance la macro VBA 'CreerBilanZones' qui génère Bilan + Graphiques + Livrable.
-    """
-    try:
-        wb = get_workbook(path)
-        macro = wb.macro("CreerBilanZones")  # ⚠️ nom exact de ta macro
-        macro()
-        wb.save()
-        return "Macro 'CreerBilanZones' exécutée avec succès ✅"
-    except Exception as e:
-        return f"Erreur exécution macro : {e}"
 
 
 
