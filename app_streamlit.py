@@ -3661,6 +3661,24 @@ elif menu == "Dashboard":
                 except Exception:
                     return "—"
 
+            def fmt_signed_percent(x):
+                try:
+                    sign = "+" if x >= 0 else "-"
+                    return f"{sign}{abs(x) * 100:.0f} %"
+                except Exception:
+                    return "—"
+
+            def fmt_arrow_percent(x, positive_is_good: bool) -> str:
+                try:
+                    val = float(x) * 100
+                except Exception:
+                    return "<span style='color:#9AA0A6'>—</span>"
+                is_pos = val >= 0
+                arrow = "↑" if is_pos else "↓"
+                good = is_pos if positive_is_good else not is_pos
+                color = "#0F9D58" if good else "#DB4437"
+                return f"<span style='color:{color}; font-weight:600;'>{arrow} {val:.0f} %</span>"
+
             def fmt_euro(x):
                 try:
                     return f"{int(round(x)):,}".replace(",", " ") + " €"
@@ -3690,37 +3708,44 @@ elif menu == "Dashboard":
 
                 with col1:
                     with st.container(border=True):
-                        
+                        st.markdown("<span style='color:gray'>% Stock CCC</span>", unsafe_allow_html=True)
                         st.markdown(f"<h3>{fmt_percent(ccc.get('% Stock CCC'))}</h3>", unsafe_allow_html=True)
 
                 with col2:
                     with st.container(border=True):
                         st.markdown("**KPI camions**")
                         st.markdown("<span style='color:gray'>Réduction camions</span>", unsafe_allow_html=True)
-                        st.markdown(f"<h3>{fmt_percent(ccc.get('% réduction Camions'))}</h3>", unsafe_allow_html=True)
+                        st.markdown(
+                            fmt_arrow_percent(ccc.get("% réduction Camions"), positive_is_good=False),
+                            unsafe_allow_html=True,
+                        )
                         st.markdown("<span style='color:gray'>Remplissage moyen des camions</span>", unsafe_allow_html=True)
                         st.markdown(
-                            f"<h3>{fmt_percent(ccc.get('% remplissage moyen des camions'))}</h3>",
-                            unsafe_allow_html=True
+                            fmt_arrow_percent(ccc.get("% remplissage moyen des camions"), positive_is_good=True),
+                            unsafe_allow_html=True,
                         )
 
                 with col3:
                     with st.container(border=True):
                         st.markdown("**KPI Coûts**")
 
-                        st.markdown("<span style='color:gray'>Stockage</span>", unsafe_allow_html=True)
-                        st.markdown(
-                            f"<h3>{fmt_euro(ccc.get('Coût CCC stockage'))}</h3>",
-                            unsafe_allow_html=True
-                        )
-                        st.markdown("<span style='color:gray'>Livraison</span>", unsafe_allow_html=True)
-                        st.markdown(
-                            f"<h3>{fmt_euro(ccc.get('Coût CCC livraison'))}</h3>",
-                            unsafe_allow_html=True
-                        )
+                        c_cost1, c_cost2 = st.columns(2)
+                        with c_cost1:
+                            st.markdown("<span style='color:gray'>Stockage</span>", unsafe_allow_html=True)
+                            st.markdown(
+                                f"<h3>{fmt_euro(ccc.get('Coût CCC stockage'))}</h3>",
+                                unsafe_allow_html=True
+                            )
+                        with c_cost2:
+                            st.markdown("<span style='color:gray'>Livraison</span>", unsafe_allow_html=True)
+                            st.markdown(
+                                f"<h3>{fmt_euro(ccc.get('Coût CCC livraison'))}</h3>",
+                                unsafe_allow_html=True
+                            )
+
                         st.markdown("<span style='color:gray'>Total</span>", unsafe_allow_html=True)
                         st.markdown(
-                            f"<h2>{fmt_euro(ccc.get('Coût CCC Total'))}</h2>",
+                            f"<h2 style='color:#0F9D58'>{fmt_euro(ccc.get('Coût CCC Total'))}</h2>",
                             unsafe_allow_html=True
                         )
 
