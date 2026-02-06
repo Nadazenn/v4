@@ -1,8 +1,11 @@
 gradio
-pandas
-scikit-learn
 joblib
-openpyxl
 numpy
+openpyxl
+pandas
 pillow
+plotly
+scikit-learn
+streamlit
+streamlit-aggrid
 

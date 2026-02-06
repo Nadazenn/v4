@@ -3,6 +3,7 @@ import math
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import unicodedata
 import database as daba
 from openpyxl import load_workbook
 
@@ -298,6 +299,22 @@ def render_dashboard_excel():
             "camions_type": base["camions_type"],  # typologie identique
         }
 
+    def _clean_ccc_familles(df: pd.DataFrame, col: str = "Famille") -> pd.DataFrame:
+        exclude = {"stock ccc production", "stock ccc terminaux"}
+        if col not in df.columns:
+            return df
+        mask = (
+            df[col]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .isin(exclude)
+        )
+        return df.loc[~mask].copy()
+
+    def _df_height(n_rows: int, row_h: int = 32, min_h: int = 180, max_h: int = 700) -> int:
+        return max(min_h, min(max_h, (n_rows + 1) * row_h))
+
     #
     # 3 bis) Préparation des données de base via pipelines
     #
@@ -367,6 +384,30 @@ def render_dashboard_excel():
     tab_var = tab_objects[1]
     tab_comp = tab_objects[2]
 
+    def _norm(s: str) -> str:
+        v = "" if s is None else str(s)
+        v = unicodedata.normalize("NFKD", v)
+        v = "".join(c for c in v if not unicodedata.combining(c))
+        return v.lower().strip()
+
+    def _find_col(columns, target: str):
+        t = _norm(target)
+        for col in columns:
+            if _norm(col) == t:
+                return col
+        return None
+
+    def _coerce_quantite_cols(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return df
+        for col in df.columns:
+            if _norm(col).startswith("quantit"):
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        return df
+
+    dpgf_date_str = dpgf_date
+    dpgf_indice = planning_indice if "planning_indice" in locals() else ""
+
 
 
     with main_tab:
@@ -389,113 +430,118 @@ def render_dashboard_excel():
             with ong_hyp_v1:
                 st.markdown("### 📘 Hypothèses")
 
-                # DPGF + PIC
-                st.markdown("#### Document de source")
+                h1, h2 = st.columns(2)
+                with h1:
+                    # DPGF + PIC
+                    st.markdown("#### 📄 Document de source")
 
-                if dpgf_date and planning_indice:
-                    default_dpgf_v1 = f"DPGF du {dpgf_date} – Indice {planning_indice}"
-                elif dpgf_date:
-                    default_dpgf_v1 = f"DPGF du {dpgf_date}"
-                elif planning_indice:
-                    default_dpgf_v1 = f"Indice {planning_indice}"
-                else:
-                    default_dpgf_v1 = ""
+                    if dpgf_date and planning_indice:
+                        default_dpgf_v1 = f"DPGF du {dpgf_date} – Indice {planning_indice}"
+                    elif dpgf_date:
+                        default_dpgf_v1 = f"DPGF du {dpgf_date}"
+                    elif planning_indice:
+                        default_dpgf_v1 = f"Indice {planning_indice}"
+                    else:
+                        default_dpgf_v1 = ""
 
-                dpgf_txt_v1 = st.text_area(
-                    "DPGF + Indice :",
-                    value=default_dpgf_v1,
-                    key="dpgf_v1",
-                    placeholder="DPGF du … – Indice …",
-                )
-
-                pic_file_v1 = st.file_uploader(
-                    "Veuillez joindre le fichier PIC", key="pic_v1"
-                )
-
-                st.markdown("---")
-
-                # Hypothèse planning
-                st.markdown("#### Hypothèse planning")
-                st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
-
-                planning_hyp_v1 = st.text_area(
-                    "Hypothèses prises pour le planning :",
-                    key="planning_hyp_v1",
-                    placeholder="Décrire ici les hypothèses utilisées pour le planning…",
-                )
-
-                st.markdown("---")
-
-                # Hypothèses de l’étude
-                st.markdown("#### Hypothèses de l’étude")
-                st.markdown("- regroupement du matériel en grandes catégories")
-                st.markdown("- conversion des conditionnements en équivalent palette")
-                st.markdown("- 2 phases de travaux par étage")
-
-                st.markdown("---")
-
-                # Paramètres CCC
-                st.markdown("#### Paramètres CCC")
-
-                def _val_param_ccc(libel):
-                    try:
-                        return param.loc[param["Lot"] == libel, lot_col].iloc[0]
-                    except:
-                        return ""
-
-                duree_ccc = _val_param_ccc("Durée de stockage CCC (en mois)")
-                tarif_mois = _val_param_ccc("Tarif mois de stockage (en €)")
-                frais_sup = _val_param_ccc("Frais supplémentaires/palette (en €)")
-                frais_liv = _val_param_ccc("Frais de livraison par camion")
-
-                st.markdown(f"- Durée stockage : **{duree_ccc} mois**")
-                st.markdown(f"- Tarif de stockage : **{tarif_mois} €/mois**")
-                st.markdown(f"- Frais supplémentaires/palette : **{frais_sup} €**")
-                st.markdown(f"- Frais de livraison : **{frais_liv} €**")
-
-                st.markdown("---")
-
-                # Familles CCC (Tableau Source + BG)
-                st.markdown("#### Hypothèse de base déportée par famille")
-
-                if (
-                    {"Nom de l'élément", "Utilisation d'une CCC"}.issubset(src_v1.columns)
-                    and {"Matériel CCC", "Nombre de matériels CCC"}.issubset(bg.columns)
-                ):
-                    df_src = src_v1[["Nom de l'élément", "Utilisation d'une CCC"]].dropna()
-                    df_src["use_ccc"] = df_src["Utilisation d'une CCC"].astype(str).str.lower().isin(
-                        ["oui", "yes", "y", "1"]
+                    dpgf_txt_v1 = st.text_area(
+                        "DPGF + Indice :",
+                        value=default_dpgf_v1,
+                        key="dpgf_v1",
+                        placeholder="DPGF du … – Indice …",
                     )
 
-                    df_yes = (
-                        df_src.groupby("Nom de l'élément", as_index=False)["use_ccc"]
-                        .any()
-                        .rename(columns={"Nom de l'élément": "Famille"})
+                    pic_file_v1 = st.file_uploader(
+                        "Veuillez joindre le fichier PIC", key="pic_v1"
                     )
 
-                    df_qty = (
-                        bg[["Matériel CCC", "Nombre de matériels CCC"]]
-                        .dropna(subset=["Matériel CCC"])
-                        .groupby("Matériel CCC", as_index=False)["Nombre de matériels CCC"]
-                        .sum()
-                        .rename(columns={"Matériel CCC": "Famille", "Nombre de matériels CCC": "Quantité"})
+                with h2:
+                    # Hypothèse planning
+                    st.markdown("#### 🕒 Hypothèse planning")
+                    st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
+
+                    planning_hyp_v1 = st.text_area(
+                        "Hypothèses prises pour le planning :",
+                        key="planning_hyp_v1",
+                        placeholder="Décrire ici les hypothèses utilisées pour le planning…",
                     )
 
-                    df_merge = pd.merge(df_yes, df_qty, on="Famille", how="left")
-                    df_merge["Quantité"] = df_merge["Quantité"].fillna(0)
-                    df_merge["Stocké en CCC ?"] = df_merge["use_ccc"].apply(lambda x: "✔️" if x else "❌")
+                h3, h4 = st.columns(2)
+                with h3:
+                    # Hypothèses de l’étude
+                    st.markdown("#### 📄 Hypothèses de l’étude")
+                    st.markdown("- regroupement du matériel en grandes catégories")
+                    st.markdown("- conversion des conditionnements en équivalent palette")
+                    st.markdown("- 2 phases de travaux par étage")
 
-                    st.dataframe(df_merge[["Famille", "Stocké en CCC ?", "Quantité"]], use_container_width=True)
+                with h4:
+                    # Paramètres CCC
+                    st.markdown("#### ⚙️ Paramètres CCC")
 
-                else:
-                    st.info("Colonnes nécessaires introuvables dans Tableau Source / BG")
+                    def _val_param_ccc(libel):
+                        try:
+                            return param.loc[param["Lot"] == libel, lot_col].iloc[0]
+                        except:
+                            return ""
 
-            #
+                    duree_ccc = _val_param_ccc("Durée de stockage CCC (en mois)")
+                    tarif_mois = _val_param_ccc("Tarif mois de stockage (en €)")
+                    frais_sup = _val_param_ccc("Frais supplémentaires/palette (en €)")
+                    frais_liv = _val_param_ccc("Frais de livraison par camion")
+
+                    st.markdown(f"- Durée stockage : **{duree_ccc} mois**")
+                    st.markdown(f"- Tarif de stockage : **{tarif_mois} €/mois**")
+                    st.markdown(f"- Frais supplémentaires/palette : **{frais_sup} €**")
+                    st.markdown(f"- Frais de livraison : **{frais_liv} €**")
+
+                with st.container():
+                    # Familles CCC (Tableau Source + BG)
+                    st.markdown("#### Hypothèse de base déportée par famille")
+
+                    if (
+                        {"Nom de l'élément", "Utilisation d'une CCC"}.issubset(src_v1.columns)
+                        and {"Matériel CCC", "Nombre de matériels CCC"}.issubset(bg.columns)
+                    ):
+                        df_src = src_v1[["Nom de l'élément", "Utilisation d'une CCC"]].dropna()
+                        df_src["use_ccc"] = df_src["Utilisation d'une CCC"].astype(str).str.lower().isin(
+                            ["oui", "yes", "y", "1"]
+                        )
+
+                        df_yes = (
+                            df_src.groupby("Nom de l'élément", as_index=False)["use_ccc"]
+                            .any()
+                            .rename(columns={"Nom de l'élément": "Famille"})
+                        )
+
+                        df_qty = (
+                            bg[["Matériel CCC", "Nombre de matériels CCC"]]
+                            .dropna(subset=["Matériel CCC"])
+                            .groupby("Matériel CCC", as_index=False)["Nombre de matériels CCC"]
+                            .sum()
+                            .rename(columns={"Matériel CCC": "Famille", "Nombre de matériels CCC": "Quantité"})
+                        )
+
+                        df_merge = pd.merge(df_yes, df_qty, on="Famille", how="left")
+                        df_merge["Quantité"] = df_merge["Quantité"].fillna(0)
+                        df_merge["Stocké en CCC ?"] = df_merge["use_ccc"].apply(lambda x: "✔️" if x else "❌")
+
+                        df_merge = _clean_ccc_familles(df_merge)
+                        display_df = df_merge[["Famille", "Stocké en CCC ?", "Quantité"]]
+                        st.dataframe(
+                            display_df,
+                            use_container_width=True,
+                            height=_df_height(len(display_df)),
+                        )
+
+                    else:
+                        st.info("Colonnes nécessaires introuvables dans Tableau Source / BG")
+    
+                #
             # 📦 ONGLET PALETTES (V1)
             #
             with ong_pal_v1:
 
-                st.markdown("### 📦 Palettes – V1 (CCC)")
+                st.markdown("### 📦 Palettes")
 
                 colA, colB = st.columns(2)
                 with colA:
@@ -511,41 +557,61 @@ def render_dashboard_excel():
 
                 c1, c2 = st.columns(2)
 
-                # -------- Matériaux stockés en CCC --------
+                # -------- Palettes par famille (Tableau Source) --------
                 with c1:
-                    st.markdown("#### Matériaux stockés en CCC")
-
-                    mat_col = None
-                    qty_col = None
-                    for c in bg.columns:
-                        cname = str(c).strip().lower()
-                        if cname.startswith("matériel ccc"):
-                            mat_col = c
-                        if cname.startswith("nombre de matériels ccc"):
-                            qty_col = c
-
-                    if mat_col and qty_col:
-                        df_v1_mat = (
-                            bg[[mat_col, qty_col]]
-                            .dropna(subset=[mat_col])
-                            .groupby(mat_col, as_index=False)[qty_col]
+                    st.markdown("#### Palettes par famille")
+                    col_fam = None
+                    for name in ["Nom de l'élément", "Nom de l'element", "Nom de l'élement"]:
+                        if name in src_v1.columns:
+                            col_fam = name
+                            break
+                    col_pal_eq = None
+                    for name in ["Nombre palettes equivalent total", "Nombre palettes équivalent total"]:
+                        if name in src_v1.columns:
+                            col_pal_eq = name
+                            break
+                    if col_fam and col_pal_eq:
+                        df_fam_pal = src_v1[[col_fam, col_pal_eq]].copy()
+                        df_fam_pal = df_fam_pal.dropna(subset=[col_fam])
+                        df_fam_pal = df_fam_pal[
+                            ~df_fam_pal[col_fam].astype(str).str.lower().str.startswith("stock ccc")
+                        ]
+                        df_fam_pal[col_pal_eq] = pd.to_numeric(
+                            df_fam_pal[col_pal_eq], errors="coerce"
+                        ).fillna(0)
+                        df_fam_pal = (
+                            df_fam_pal.groupby(col_fam, as_index=False)[col_pal_eq]
                             .sum()
+                            .sort_values(col_pal_eq, ascending=False)
                         )
-
-                        fig_mat_v1 = px.bar(
-                            df_v1_mat,
-                            x=qty_col,
-                            y=mat_col,
+                        fig_fam_pal = px.bar(
+                            df_fam_pal,
+                            x=col_pal_eq,
+                            y=col_fam,
                             orientation="h",
-                            title="Répartition des matériaux stockés en CCC",
+                            color=col_fam,
+                            color_discrete_sequence=[
+                                "#F4A261",
+                                "#2A9D8F",
+                                "#E76F51",
+                                "#264653",
+                                "#8AB17D",
+                                "#F1C453",
+                                "#6D597A",
+                            ],
                         )
-                        st.plotly_chart(fig_mat_v1, key="bar_mat_v1", use_container_width=True)
+                        fig_fam_pal.update_layout(
+                            showlegend=False,
+                            yaxis={"categoryorder": "total ascending"},
+                            margin=dict(l=10, r=10, t=20, b=10),
+                        )
+                        st.plotly_chart(fig_fam_pal, key="palettes_famille_v1", use_container_width=True)
                     else:
-                        st.info("Colonnes Matériel CCC absentes")
+                        st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
-                # -------- Flux palettes (identique V0) --------
+                # -------- Flux palettes --------
                 with c2:
-                    st.markdown("#### Flux mensuel de palettes (PIC identique)")
+                    st.markdown("#### Flux mensuel de palettes")
 
                     flux_palettes_plot = flux_palettes.copy()
                     if not flux_palettes_plot.empty:
@@ -598,22 +664,55 @@ def render_dashboard_excel():
                     )
 
 
-                # -------- Palettes par étage --------
-                st.markdown("#### Répartition des palettes par étage / zone")
-                fig_pal_v1 = px.bar(
-                    palettes_zone,
-                    x="Étage - Zone",
-                    y="Palettes",
-                    color="Palettes",
-                )
-                st.plotly_chart(fig_pal_v1, key="palettes_zone_v1", use_container_width=True)
+                # -------- Matériaux stockés en CCC + Répartition palettes --------
+                c3, c4 = st.columns(2)
+                with c3:
+                    st.markdown("#### Matériaux stockés en CCC")
+
+                    mat_col = None
+                    qty_col = None
+                    for c in bg.columns:
+                        cname = str(c).strip().lower()
+                        if cname.startswith("matériel ccc"):
+                            mat_col = c
+                        if cname.startswith("nombre de matériels ccc"):
+                            qty_col = c
+
+                    if mat_col and qty_col:
+                        df_v1_mat = (
+                            bg[[mat_col, qty_col]]
+                            .dropna(subset=[mat_col])
+                            .groupby(mat_col, as_index=False)[qty_col]
+                            .sum()
+                        )
+
+                        st.markdown("#### Répartition des matériaux stockés en CCC")
+                        fig_mat_v1 = px.bar(
+                            df_v1_mat,
+                            x=qty_col,
+                            y=mat_col,
+                            orientation="h",
+                        )
+                        st.plotly_chart(fig_mat_v1, key="bar_mat_v1", use_container_width=True)
+                    else:
+                        st.info("Colonnes Matériel CCC absentes")
+
+                with c4:
+                    st.markdown("#### Répartition des palettes par étage / zone")
+                    fig_pal_v1 = px.bar(
+                        palettes_zone,
+                        x="Étage - Zone",
+                        y="Palettes",
+                        color="Palettes",
+                    )
+                    st.plotly_chart(fig_pal_v1, key="palettes_zone_v1", use_container_width=True)
 
             #
             # 🚚 ONGLET CAMIONS (V1)
             #
             with ong_cam_v1:
 
-                st.markdown("### 🚚 Camions avec CCC")
+                st.markdown("### 🚚 Camions")
 
                 colA, colB = st.columns(2)
                 colA.metric("Nombre total de camions (CCC)", f"{total_camions_ccc:,.0f}")
@@ -623,7 +722,7 @@ def render_dashboard_excel():
 
                 # -------- Camions par zone --------
                 with c1:
-                    st.markdown("#### Camions par étage (CCC)")
+                    st.markdown("#### Camions par étage")
                     if not camions_zone_ccc.empty:
                         fig_zone_ccc = px.bar(
                             camions_zone_ccc,
@@ -637,7 +736,7 @@ def render_dashboard_excel():
 
                 # -------- Flux camions CCC --------
                 with c2:
-                    st.markdown("#### Flux mensuel de camions CCC")
+                    st.markdown("#### Flux mensuel de camions")
 
                     if not flux_camions_ccc.empty:
 
@@ -702,68 +801,77 @@ def render_dashboard_excel():
                 
                 
 
-                # -------- Remplissage CCC --------
-                st.markdown("#### Remplissage par étage (CCC)")
-                if not rempl_zone_ccc.empty:
-                    fig_r_ccc = px.bar(
-                        rempl_zone_ccc,
-                        x="Étage - Zone",
-                        y="Remplissage (%)",
-                        color="Remplissage (%)",
-                    )
-                    st.plotly_chart(fig_r_ccc, key="remplissage_ccc_v1", use_container_width=True)
-                else:
-                    st.info("Aucune donnée de remplissage CCC disponible")
-            
-
-                # Typologie des camions (V1 – CCC, colonnes X et Y)
-
-                st.markdown("## 🚚 Typologie des camions (CCC)")
-
-                try:
-                    # Colonnes strictes par position
-                    col_type = bg.columns[23]   # colonne X
-                    col_nb   = bg.columns[24]   # colonne Y
-
-                    df_camions_ccc = (
-                        bg[[col_type, col_nb]]
-                        .dropna(subset=[col_type])
-                        .groupby(col_type, as_index=False)[col_nb]
-                        .sum()
-                        .rename(columns={
-                            col_type: "Type de Camion",
-                            col_nb: "Nombre de Camions"
-                        })
-                    )
-
-                    if df_camions_ccc.empty:
-                        st.info("Aucun camion (CCC) trouvé dans les colonnes X et Y.")
+                c_rempl_ccc, c_typo_ccc = st.columns(2)
+                with c_rempl_ccc:
+                    # -------- Remplissage CCC --------
+                    st.markdown("#### Remplissage par étage")
+                    if not rempl_zone_ccc.empty:
+                        x_col = None
+                        for c in rempl_zone_ccc.columns:
+                            cname = str(c).lower()
+                            if "tage" in cname and "zone" in cname:
+                                x_col = c
+                                break
+                        if x_col is None:
+                            x_col = rempl_zone_ccc.columns[0]
+                        fig_r_ccc = px.bar(
+                            rempl_zone_ccc,
+                            x=x_col,
+                            y="Remplissage (%)",
+                            color="Remplissage (%)",
+                        )
+                        st.plotly_chart(fig_r_ccc, key="remplissage_ccc_v1", use_container_width=True)
                     else:
-                        for _, row in df_camions_ccc.iterrows():
-                            nom_camion = str(row["Type de Camion"]).strip()
-                            quantite = int(row["Nombre de Camions"])
+                        st.info("Aucune donnÃ©e de remplissage CCC disponible")
+                with c_typo_ccc:
+                    # Typologie des camions (V1 â€“ CCC, colonnes X et Y)
+                    st.markdown("## 🚚 Typologie des camions")
+                    try:
+                        # Colonnes strictes par position
+                        col_type = bg.columns[23]   # colonne X
+                        col_nb   = bg.columns[24]   # colonne Y
 
-                            # Filtrer uniquement les camions connus
-                            if nom_camion not in daba.liste_camions:
-                                continue
+                        df_camions_ccc = (
+                            bg[[col_type, col_nb]]
+                            .dropna(subset=[col_type])
+                            .groupby(col_type, as_index=False)[col_nb]
+                            .sum()
+                            .rename(columns={
+                                col_type: "Type de Camion",
+                                col_nb: "Nombre de Camions"
+                            })
+                        )
 
-                            img_path = f"images/image_camions/{nom_camion}.png"
-                            c_img, c_nom, c_nb = st.columns([1, 3, 1])
+                        if df_camions_ccc.empty:
+                            st.info("Aucun camion (CCC) trouvÃ© dans les colonnes X et Y.")
+                        else:
+                            for _, row in df_camions_ccc.iterrows():
+                                nom_camion = str(row["Type de Camion"]).strip()
+                                quantite = int(row["Nombre de Camions"])
 
-                            with c_img:
-                                try:
-                                    st.image(img_path, width=70)
-                                except:
-                                    st.write("🚚")
+                                # Filtrer uniquement les camions connus
+                                if nom_camion not in daba.liste_camions:
+                                    continue
 
-                            with c_nom:
-                                st.write(f"**{nom_camion}**")
+                                img_path = f"images/image_camions/{nom_camion}.png"
+                                c_img, c_nom, c_nb = st.columns([1, 3, 1])
 
-                            with c_nb:
-                                st.write(f"**{quantite}**")
+                                with c_img:
+                                    try:
+                                        st.image(img_path, width=70)
+                                    except:
+                                        st.write("ðŸšš")
 
-                except Exception as e:
-                    st.error(f"Erreur lecture typologie V1 (colonnes X et Y): {e}")           
+                                with c_nom:
+                                    st.write(f"**{nom_camion}**")
+
+                                with c_nb:
+                                    st.write(f"**{quantite}**")
+
+                    except Exception as e:
+                        st.error(f"Erreur lecture typologie V1 (colonnes X et Y): {e}")
+
+
 
 
 
@@ -779,100 +887,73 @@ def render_dashboard_excel():
             # 📘 ONGLET HYPOTHÈSES (V0)
             #
             with ong_hyp:
-                # ---------- Document de source ----------
-                st.markdown("### 📘 Document de source : DPGF + Indice + PIC")
-
-                # Pré-remplissage DPGF + Indice à partir de dpgf_date et planning_indice
-                if dpgf_date and planning_indice:
-                    default_dpgf = f"DPGF du {dpgf_date} – Indice {planning_indice}"
-                elif dpgf_date:
-                    default_dpgf = f"DPGF du {dpgf_date}"
-                elif planning_indice:
-                    default_dpgf = f"Indice {planning_indice}"
-                else:
-                    default_dpgf = ""
-
-                dpgf_txt = st.text_area(
-                    "DPGF + Indice :",
-                    value=default_dpgf,
-                    key="dpgf_v0",
-                    placeholder="DPGF du … – Indice …"
-                )
-
-                st.file_uploader("Veuillez joindre le fichier PIC", key="pic_v0")
-
-                st.markdown("---")
-
-                # ---------- Hypothèse planning ----------
-                st.markdown("### 🕒 Hypothèse planning")
-                st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
-
-                planning_hyp = st.text_area(
-                    "Hypothèses prises pour planning :",
-                    key="planning_hyp_v0",
-                    placeholder="Décrire ici les hypothèses utilisées pour le planning…"
-                )
-
-                if planning_hyp.strip() == "":
-                    st.markdown(
-                        "<p style='color:red;'>Hypothèses planning non complétées</p>",
-                        unsafe_allow_html=True,
+                st.markdown("### 📘 Hypothèses")
+                h1, h2 = st.columns(2)
+                with h1:
+                    # ---------- Document de source ----------
+                    st.markdown("### 📄 Document de source")
+                    # Pre-remplissage DPGF + Indice a partir de dpgf_date et planning_indice
+                    if dpgf_date and planning_indice:
+                        default_dpgf = f"DPGF du {dpgf_date} - Indice {planning_indice}"
+                    elif dpgf_date:
+                        default_dpgf = f"DPGF du {dpgf_date}"
+                    elif planning_indice:
+                        default_dpgf = f"Indice {planning_indice}"
+                    else:
+                        default_dpgf = ""
+                    dpgf_txt = st.text_area(
+                        "DPGF + Indice :",
+                        value=default_dpgf,
+                        key="dpgf_v0",
+                        placeholder="DPGF du JJ/MM/AAAA - Indice X"
                     )
-                else:
-                    st.markdown(
-                        "<p style='color:green;'>Hypothèses planning complétées</p>",
-                        unsafe_allow_html=True,
+                    st.file_uploader("Veuillez joindre le fichier PIC", key="pic_v0")
+                with h2:
+                    # ---------- Hypothèse planning ----------
+                    st.markdown("### 🕒 Hypothèse planning")
+                    st.markdown(f"- Planning indice : **{planning_indice or 'N/A'}**")
+                    planning_hyp = st.text_area(
+                        "Hypotheses prises pour planning :",
+                        key="planning_hyp_v0",
+                        placeholder="Decrire ici les hypotheses utilisees pour le planning."
                     )
-
-                st.markdown("---")
-
-                # ---------- Hypothèses de l’étude ----------
-                st.markdown("### 📄 Hypothèses de l’étude")
-                st.markdown("- regroupement du matériel en grandes catégories")
-                st.markdown(
-                    "- conversion des conditionnements en équivalent palette "
-                    "(palette européenne 1,2 × 0,8)"
-                )
-                st.markdown("- 2 phases de travaux par étage : Production et Terminaux")
-
-                st.markdown("---")
-
-                # ---------- Hypothèse de base par famille ----------
-                st.markdown("### 🧩 Hypothèse de base déportée par famille")
-
-                # Familles depuis Tableau Source ou Matériel
-
-                if "Nom de l'élément" in src.columns:
-                    familles_src = (
-                        src["Nom de l'élément"]
-                        .dropna()
-                        .astype(str)
-                        .sort_values()
-                        .unique()
-                    )
-                elif "Nom" in materiel.columns:
-                    familles_src = (
-                        materiel["Nom"]
-                        .dropna()
-                        .astype(str)
-                        .sort_values()
-                        .unique()
-                    )
-                else:
-                    familles_src = []
-
-                if len(familles_src) == 0:
-                    st.info("Aucune famille trouvée.")
-                else:
-                    df_fam = pd.DataFrame({
-                        "Famille": familles_src,
-                        "Stocké en CCC ?": ["❌"] * len(familles_src),
-                        "Quantité": [0] * len(familles_src),  # 👈 logique explicite
-                    })
-
-                    st.dataframe(df_fam, use_container_width=True)
-
-            #
+                    if planning_hyp.strip() == "":
+                        st.markdown(
+                            "<p style='color:red;'>Hypotheses planning non completees</p>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            "<p style='color:green;'>Hypotheses planning completees</p>",
+                            unsafe_allow_html=True,
+                        )
+                h3, h4 = st.columns(2)
+                with h3:
+                    # ---------- Hypothèses de l’étude ----------
+                    st.markdown("### 📄 Hypothèses de l’étude")
+                    st.markdown("- regroupement du materiel en grandes categories")
+                    st.markdown("- conversion des conditionnements en equivalent palette (palette europeenne 1,2 x 0,8)")
+                    st.markdown("- 2 phases de travaux par etage : Production et Terminaux")
+                with h4:
+                    # ---------- Hypothese de base par famille ----------
+                    st.markdown("###  Hypothèse de base déportée par famille")
+                    if "Nom de l'élément" in src.columns:
+                        familles_src = (src["Nom de l'élément"].dropna().astype(str).sort_values().unique())
+                    elif "Nom" in materiel.columns:
+                        familles_src = (materiel["Nom"].dropna().astype(str).sort_values().unique())
+                    else:
+                        familles_src = []
+                    if len(familles_src) == 0:
+                        st.info("Aucune famille trouvee.")
+                    else:
+                        df_fam = pd.DataFrame(
+                            {
+                                "Famille": familles_src,
+                                "Stocké en CCC ?": ["❌"] * len(familles_src),
+                                "Quantité": [0] * len(familles_src),
+                            }
+                        )
+                        st.dataframe(df_fam, use_container_width=True)
             # 📦 ONGLET PALETTES (V0)
             #
             with ong_pal:
@@ -898,38 +979,58 @@ def render_dashboard_excel():
                 c1, c2 = st.columns(2)
 
                 # --------------------------------------------------
-                # Graphique horizontal : répartition des matériaux (V0)
+                # Palettes par famille (Tableau Source)
                 # --------------------------------------------------
                 with c1:
-                    st.markdown("#### Répartition des matériaux")
-
-                    mat_col = None
-                    qty_col = None
-                    for c in bg.columns:
-                        cname = str(c).strip().lower()
-                        if cname.startswith("matériel complet"):
-                            mat_col = c
-                        if cname.startswith("nombre total de matériels"):
-                            qty_col = c
-
-                    if mat_col and qty_col:
-                        df_v0_mat = (
-                            bg[[mat_col, qty_col]]
-                            .dropna(subset=[mat_col])
-                            .groupby(mat_col, as_index=False)[qty_col]
+                    st.markdown("#### Palettes par famille")
+                    col_fam = None
+                    for name in ["Nom de l'élément", "Nom de l'element", "Nom de l'élement"]:
+                        if name in src.columns:
+                            col_fam = name
+                            break
+                    col_pal_eq = None
+                    for name in ["Nombre palettes equivalent total", "Nombre palettes équivalent total"]:
+                        if name in src.columns:
+                            col_pal_eq = name
+                            break
+                    if col_fam and col_pal_eq:
+                        df_fam_pal = src[[col_fam, col_pal_eq]].copy()
+                        df_fam_pal = df_fam_pal.dropna(subset=[col_fam])
+                        df_fam_pal = df_fam_pal[
+                            ~df_fam_pal[col_fam].astype(str).str.lower().str.startswith("stock ccc")
+                        ]
+                        df_fam_pal[col_pal_eq] = pd.to_numeric(
+                            df_fam_pal[col_pal_eq], errors="coerce"
+                        ).fillna(0)
+                        df_fam_pal = (
+                            df_fam_pal.groupby(col_fam, as_index=False)[col_pal_eq]
                             .sum()
+                            .sort_values(col_pal_eq, ascending=False)
                         )
-
-                        fig_mat_v1 = px.bar(
-                            df_v0_mat,
-                            x=qty_col,
-                            y=mat_col,
+                        fig_fam_pal = px.bar(
+                            df_fam_pal,
+                            x=col_pal_eq,
+                            y=col_fam,
                             orientation="h",
-                            title="Répartition des matériaux stockés en CCC",
+                            color=col_fam,
+                            color_discrete_sequence=[
+                                "#F4A261",
+                                "#2A9D8F",
+                                "#E76F51",
+                                "#264653",
+                                "#8AB17D",
+                                "#F1C453",
+                                "#6D597A",
+                            ],
                         )
-                        st.plotly_chart(fig_mat_v1, key="bar_mat_v0", use_container_width=True)
+                        fig_fam_pal.update_layout(
+                            showlegend=False,
+                            yaxis={"categoryorder": "total ascending"},
+                            margin=dict(l=10, r=10, t=20, b=10),
+                        )
+                        st.plotly_chart(fig_fam_pal, key="palettes_famille_v0", use_container_width=True)
                     else:
-                        st.info("Colonnes absentes")
+                        st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
                 # --------------------------------------------------
                 # Flux mensuel de palettes + PIC (V0)
@@ -987,22 +1088,26 @@ def render_dashboard_excel():
                     )
 
                 # --------------------------------------------------
-                # Répartition par étage / zone (plein largeur)
+                # Répartition par étage / zone
                 # --------------------------------------------------
-                st.markdown("#### Répartition des palettes par étage / zone")
-                fig_pal_zone_v0 = px.bar(
-                    palettes_zone,
-                    x="Étage - Zone",
-                    y="Palettes",
-                    color="Palettes",
-                )
-                fig_pal_zone_v0.update_layout(margin=dict(l=10, r=10, t=30, b=40))
-                st.plotly_chart(
-                    fig_pal_zone_v0,
-                    use_container_width=True,
-                    height=320,
-                    key="palettes_zone_v0",
-                )
+                c3, c4 = st.columns(2)
+                with c3:
+                    st.markdown("#### Répartition des palettes par étage / zone")
+                    fig_pal_zone_v0 = px.bar(
+                        palettes_zone,
+                        x="Étage - Zone",
+                        y="Palettes",
+                        color="Palettes",
+                    )
+                    fig_pal_zone_v0.update_layout(margin=dict(l=10, r=10, t=30, b=40))
+                    st.plotly_chart(
+                        fig_pal_zone_v0,
+                        use_container_width=True,
+                        height=320,
+                        key="palettes_zone_v0",
+                    )
+                with c4:
+                    st.empty()
 
             #
             # 🚚 ONGLET CAMIONS (V0)
@@ -1113,75 +1218,82 @@ def render_dashboard_excel():
                 # -----------------------------------------------------------
                 # REMPLISSAGE PAR ÉTAGE / ZONE
                 # -----------------------------------------------------------
-                st.markdown("#### Remplissage des camions par étage ")
-                if not rempl_zone.empty:
-                    fig_rempl = px.bar(
-                        rempl_zone,
-                        x="Étage - Zone",
-                        y="Remplissage (%)",
-                        color="Remplissage (%)",
-                        color_continuous_scale="Purples",
-                    )
-                    fig_rempl.update_layout(
-                        margin=dict(l=10, r=10, t=30, b=40)
-                    )
-                    st.plotly_chart(
-                        fig_rempl,
-                        use_container_width=True,
-                        key="cam_v0_rempl",
-                    )
-                else:
-                    st.info("Aucune donnée de remplissage disponible.")
+                c4, c5 = st.columns(2)
+                with c4:
+                    st.markdown("#### Remplissage des camions par étage ")
+                    if not rempl_zone.empty:
+                        fig_rempl = px.bar(
+                            rempl_zone,
+                            x="Étage - Zone",
+                            y="Remplissage (%)",
+                            color="Remplissage (%)",
+                            color_continuous_scale="Purples",
+                        )
+                        fig_rempl.update_layout(
+                            margin=dict(l=10, r=10, t=30, b=40)
+                        )
+                        st.plotly_chart(
+                            fig_rempl,
+                            use_container_width=True,
+                            key="cam_v0_rempl",
+                        )
+                    else:
+                        st.info("Aucune donnée de remplissage disponible.")
+                with c5:
+                    st.empty()
 
 
                 # Typologie des camions (V0 – colonnes T et U)
+                c6, c7 = st.columns(2)
+                with c6:
+                    st.markdown("## 🚚 Typologie des camions")
+                    try:
+                        # Identification stricte des colonnes T et U
+                        col_type = bg.columns[19]   # colonne T
+                        col_nb   = bg.columns[20]   # colonne U
 
-                st.markdown("## 🚚 Typologie des camions (V0)")
+                        df_camions_v0 = (
+                            bg[[col_type, col_nb]]
+                            .dropna(subset=[col_type])
+                            .groupby(col_type, as_index=False)[col_nb]
+                            .sum()
+                            .rename(columns={
+                                col_type: "Type de Camion",
+                                col_nb:   "Nombre de Camions"
+                            })
+                        )
 
-                try:
-                    # Identification stricte des colonnes T et U
-                    col_type = bg.columns[19]   # colonne T
-                    col_nb   = bg.columns[20]   # colonne U
+                        if df_camions_v0.empty:
+                            st.info("Aucun camion trouve dans les colonnes T et U.")
+                        else:
+                            for _, row in df_camions_v0.iterrows():
+                                nom_camion = str(row["Type de Camion"]).strip()
+                                quantite = int(row["Nombre de Camions"])
 
-                    df_camions_v0 = (
-                        bg[[col_type, col_nb]]
-                        .dropna(subset=[col_type])
-                        .groupby(col_type, as_index=False)[col_nb]
-                        .sum()
-                        .rename(columns={
-                            col_type: "Type de Camion",
-                            col_nb:   "Nombre de Camions"
-                        })
-                    )
+                                # Filtrer uniquement les camions connus
+                                if nom_camion not in daba.liste_camions:
+                                    continue
 
-                    if df_camions_v0.empty:
-                        st.info("Aucun camion trouvé dans les colonnes T et U.")
-                    else:
-                        for _, row in df_camions_v0.iterrows():
-                            nom_camion = str(row["Type de Camion"]).strip()
-                            quantite = int(row["Nombre de Camions"])
+                                img_path = f"images/image_camions/{nom_camion}.png"
+                                c_img, c_nom, c_nb = st.columns([1, 3, 1])
 
-                            # Filtrer uniquement les camions connus
-                            if nom_camion not in daba.liste_camions:
-                                continue
+                                with c_img:
+                                    try:
+                                        st.image(img_path, width=70)
+                                    except:
+                                        st.write("camion")
 
-                            img_path = f"images/image_camions/{nom_camion}.png"
-                            c_img, c_nom, c_nb = st.columns([1, 3, 1])
+                                with c_nom:
+                                    st.write(f"**{nom_camion}**")
 
-                            with c_img:
-                                try:
-                                    st.image(img_path, width=70)
-                                except:
-                                    st.write("🚚")
+                                with c_nb:
+                                    st.write(f"**{quantite}**")
 
-                            with c_nom:
-                                st.write(f"**{nom_camion}**")
+                    except Exception as e:
+                        st.error(f"Erreur lecture typologie V0 (colonnes T et U): {e}")
+                with c7:
+                    st.empty()
 
-                            with c_nb:
-                                st.write(f"**{quantite}**")
-
-                except Exception as e:
-                    st.error(f"Erreur lecture typologie V0 (colonnes T et U): {e}")
 
 
 
@@ -1249,13 +1361,14 @@ def render_dashboard_excel():
             st.session_state["variant_counter"] += 1
             st.success(f"Variante {vid} créée.")
 
-        # --- LISTE DES VARIANTES EXISTANTES ---
+        # --- LISTE DES VARIANTES EXISTANTES 
         variants = st.session_state.get("variants", {})
 
         if not variants:
             st.info("Aucune variante pour le moment.")
         else:
             for vid, meta in variants.items():
+                mois_pic_palettes_var = None
 
                 st.markdown(
                     f"### {vid} – {'avec CCC' if meta['with_ccc'] else 'sans CCC'}"
@@ -1318,7 +1431,6 @@ def render_dashboard_excel():
                 rempl_moyen_var = metrics_var["rempl_moyen"]
                 camions_type_var = metrics_var["camions_type"]
 
-                # DASHBOARD VARIANTE
                 with st.expander(f"Afficher le dashboard de {vid}", expanded=False):
 
                     # EXACTEMENT la même structure : Hypothèses / Palettes / Camions
@@ -1326,70 +1438,108 @@ def render_dashboard_excel():
                         ["📘 Hypothèses", "📦 Palettes", "🚚 Camions"]
                     )
 
-                    #
                     #  VARIANTE SANS CCC  → miroir du DASHBOARD V0
-                    #
                     if not meta["with_ccc"]:
 
                         # ---------------- HYPO V0----------------
                         with ong_hyp_v:
-                            st.markdown("### 📘 Hypothèses – Variante Sans CCC (V0)")
-                            st.markdown(
-                                "- Même logique que V0, mais toutes les valeurs proviennent "
-                                "du fichier Excel de la variante."
-                            )
+                            st.markdown("### 📘 Hypothèses")
+                            h1, h2 = st.columns(2)
+                            with h1:
+                                st.markdown("#### 📄 Document de source")
+                                if dpgf_date_str and dpgf_indice:
+                                    default_dpgf = f"DPGF indice {dpgf_indice} du {dpgf_date_str}"
+                                elif dpgf_date_str:
+                                    default_dpgf = f"DPGF du {dpgf_date_str}"
+                                elif dpgf_indice:
+                                    default_dpgf = f"DPGF indice {dpgf_indice}"
+                                else:
+                                    default_dpgf = ""
 
-                            # Hypothèses de l’étude (idem V0)
-                            st.markdown("### 📄 Hypothèses de l’étude")
-                            st.markdown("- regroupement du matériel en grandes catégories")
-                            st.markdown(
-                                "- conversion des conditionnements en équivalent palette "
-                                "(palette européenne 1,2 × 0,8)"
-                            )
-                            st.markdown(
-                                "- 2 phases de travaux par étage : Production et Terminaux"
-                            )
-
-                            st.markdown("---")
-
-                            # Hypothèse de base déportée par famille (variante)
-                            st.markdown("### 🧩 Hypothèse de base déportée par famille")
-
-                            if "Nom de l'élément" in src_var.columns:
-                                familles_src_v = (
-                                    src_var["Nom de l'élément"]
-                                    .dropna()
-                                    .astype(str)
-                                    .sort_values()
-                                    .unique()
+                                st.text_area(
+                                    "DPGF + Indice :",
+                                    value=default_dpgf,
+                                    key=f"dpgf_var_{vid}",
+                                    placeholder="DPGF indice ? du ?",
                                 )
-                            elif "Nom" in materiel_var.columns:
-                                familles_src_v = (
-                                    materiel_var["Nom"]
-                                    .dropna()
-                                    .astype(str)
-                                    .sort_values()
-                                    .unique()
-                                )
-                            else:
-                                familles_src_v = []
 
-                            if len(familles_src_v) == 0:
-                                st.info(
-                                    "Aucune famille trouvée dans Tableau Source / Matériel de la variante."
+                                st.file_uploader(
+                                    "Veuillez joindre le fichier PIC",
+                                    key=f"pic_var_{vid}",
                                 )
-                            else:
-                                df_fam_v = pd.DataFrame(
-                                    {
-                                        "Famille": familles_src_v,
-                                        "Stocké en CCC ?": ["❌" for _ in familles_src_v],
-                                    }
-                                )
-                                st.dataframe(df_fam_v, use_container_width=True)
 
-                        # ---------------- PALETTES V0 (variante) ----------------
+                            with h2:
+                                st.markdown("#### 🕒 Hypothèse planning")
+                                st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
+
+                                planning_hyp_var = st.text_area(
+                                    "Hypothèses prises pour planning :",
+                                    key=f"planning_hyp_var_{vid}",
+                                    placeholder="Décrire ici les hypothèses utilisées pour le planning…",
+                                )
+
+                                if planning_hyp_var.strip() == "":
+                                    st.markdown(
+                                        "<p style='color:red;'>Hypothèses planning non complétées</p>",
+                                        unsafe_allow_html=True,
+                                    )
+                                else:
+                                    st.markdown(
+                                        "<p style='color:green;'>Hypothèses planning complétées</p>",
+                                        unsafe_allow_html=True,
+                                    )
+
+                            h3, h4 = st.columns(2)
+                            with h3:
+                                # Hypothèses de l’étude (idem V0)
+                                st.markdown("#### 📄 Hypothèses de l’étude")
+                                st.markdown("- regroupement du matériel en grandes catégories")
+                                st.markdown(
+                                    "- conversion des conditionnements en équivalent palette "
+                                    "(palette européenne 1,2 × 0,8)"
+                                )
+                                st.markdown(
+                                    "- 2 phases de travaux par étage : Production et Terminaux"
+                                )
+
+                            with h4:
+                                st.markdown("#### Hypothèse de base déportée par famille")
+
+                                if "Nom de l'élément" in src_var.columns:
+                                    familles_src_v = (
+                                        src_var["Nom de l'élément"]
+                                        .dropna()
+                                        .astype(str)
+                                        .sort_values()
+                                        .unique()
+                                    )
+                                elif "Nom" in materiel_var.columns:
+                                    familles_src_v = (
+                                        materiel_var["Nom"]
+                                        .dropna()
+                                        .astype(str)
+                                        .sort_values()
+                                        .unique()
+                                    )
+                                else:
+                                    familles_src_v = []
+    
+                                if len(familles_src_v) == 0:
+                                    st.info(
+                                        "Aucune famille trouvée dans Tableau Source / Matériel de la variante."
+                                    )
+                                else:
+                                    df_fam_v = pd.DataFrame(
+                                        {
+                                            "Famille": familles_src_v,
+                                            "Stocké en CCC ?": ["❌" for _ in familles_src_v],
+                                        }
+                                    )
+                                    st.dataframe(df_fam_v, use_container_width=True)
+    
+                            # ---------------- PALETTES V0 (variante) ----------------
                         with ong_pal_v:
-                            st.markdown("### 📦 Palettes – Variante Sans CCC (V0)")
+                            st.markdown("### 📦 Palettes")
 
                             cA, cB = st.columns(2)
                             with cA:
@@ -1407,52 +1557,55 @@ def render_dashboard_excel():
 
                             # Répartition matériaux (on refait comme en V0 mais sur bg_var)
                             with c1:
-                                st.markdown("#### Répartition des matériaux ")
-
-                                design_col_v = None
-                                qty_col_v = None
-                                for c in bg_var.columns:
-                                    cname = str(c).strip().lower()
-                                    if cname.startswith("désignation"):
-                                        design_col_v = c
-                                    if cname.startswith("quantité"):
-                                        qty_col_v = c
-
-                                if design_col_v is not None and qty_col_v is not None:
-                                    df_mat_v0_var = (
-                                        bg_var[[design_col_v, qty_col_v]]
-                                        .dropna(subset=[design_col_v])
-                                        .groupby(design_col_v, as_index=False)[qty_col_v]
+                                st.markdown("#### Palettes par famille")
+                                col_fam_v = (
+                                    _find_col(src_var.columns, "Nom de l'element")
+                                    or _find_col(src_var.columns, "Nom de l'élément")
+                                    or _find_col(src_var.columns, "Nom de l'élement")
+                                )
+                                col_pal_eq_v = _find_col(src_var.columns, "Nombre palettes equivalent total")
+                                if col_fam_v and col_pal_eq_v:
+                                    df_fam_pal_v = src_var[[col_fam_v, col_pal_eq_v]].copy()
+                                    df_fam_pal_v = df_fam_pal_v.dropna(subset=[col_fam_v])
+                                    df_fam_pal_v = df_fam_pal_v[
+                                        ~df_fam_pal_v[col_fam_v].astype(str).str.lower().str.startswith("stock ccc")
+                                    ]
+                                    df_fam_pal_v[col_pal_eq_v] = pd.to_numeric(
+                                        df_fam_pal_v[col_pal_eq_v], errors="coerce"
+                                    ).fillna(0)
+                                    df_fam_pal_v = (
+                                        df_fam_pal_v.groupby(col_fam_v, as_index=False)[col_pal_eq_v]
                                         .sum()
+                                        .sort_values(col_pal_eq_v, ascending=False)
                                     )
-
-                                    N = 15
-                                    df_mat_v0_var = df_mat_v0_var.sort_values(
-                                        qty_col_v, ascending=True
-                                    ).tail(N)
-
-                                    fig_bar_v0_var = px.bar(
-                                        df_mat_v0_var,
-                                        x=qty_col_v,
-                                        y=design_col_v,
+                                    fig_fam_pal_v = px.bar(
+                                        df_fam_pal_v,
+                                        x=col_pal_eq_v,
+                                        y=col_fam_v,
                                         orientation="h",
-                                        text=qty_col_v,
+                                        color=col_fam_v,
+                                        color_discrete_sequence=[
+                                            "#F4A261",
+                                            "#2A9D8F",
+                                            "#E76F51",
+                                            "#264653",
+                                            "#8AB17D",
+                                            "#F1C453",
+                                            "#6D597A",
+                                        ],
                                     )
-                                    fig_bar_v0_var.update_traces(textposition="outside")
-                                    fig_bar_v0_var.update_layout(
-                                        title="Répartition des matériaux (variante V0)",
-                                        margin=dict(l=10, r=10, t=40, b=10),
-                                        height=380,
+                                    fig_fam_pal_v.update_layout(
                                         showlegend=False,
+                                        yaxis={"categoryorder": "total ascending"},
+                                        margin=dict(l=10, r=10, t=20, b=10),
                                     )
                                     st.plotly_chart(
-                                        fig_bar_v0_var,
+                                        fig_fam_pal_v,
+                                        key=f"pal_fam_v0_{vid}",
                                         use_container_width=True,
                                     )
                                 else:
-                                    st.info(
-                                        "Impossible de trouver les colonnes 'Désignation' et 'Quantité' dans le BG de la variante."
-                                    )
+                                    st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
                             # Flux mensuel palettes (variante)
                             with c2:
@@ -1462,7 +1615,7 @@ def render_dashboard_excel():
                                 if not flux_palettes_plot_v.empty:
                                     flux_palettes_plot_v["Mois"] = flux_palettes_plot_v["Mois"].astype(str)
 
-                                # 2e colonne valeur
+# 2e colonne valeur
                                 if not flux_palettes_plot_v.empty:
                                     y_col_pal = [
                                         c for c in flux_palettes_plot_v.columns if c != "Mois"
@@ -1505,24 +1658,28 @@ def render_dashboard_excel():
                                 )
 
                             # Palettes par étage / zone
-                            st.markdown("#### Répartition des palettes par étage / zone ")
-                            fig_pal_zone_v = px.bar(
-                                palettes_zone_var,
-                                x="Étage - Zone",
-                                y="Palettes",
-                                color="Palettes",
-                            )
-                            fig_pal_zone_v.update_layout(
-                                margin=dict(l=10, r=10, t=30, b=40)
-                            )
-                            st.plotly_chart(
-                                fig_pal_zone_v,
-                                use_container_width=True,
-                            )
+                            c3, c4 = st.columns(2)
+                            with c3:
+                                st.markdown("#### Répartition des palettes par étage / zone ")
+                                fig_pal_zone_v = px.bar(
+                                    palettes_zone_var,
+                                    x="Étage - Zone",
+                                    y="Palettes",
+                                    color="Palettes",
+                                )
+                                fig_pal_zone_v.update_layout(
+                                    margin=dict(l=10, r=10, t=30, b=40)
+                                )
+                                st.plotly_chart(
+                                    fig_pal_zone_v,
+                                    use_container_width=True,
+                                )
+                            with c4:
+                                st.empty()
 
                         # ---------------- CAMIONS V0 (variante) ----------------
                         with ong_cam_v:
-                            st.markdown("### 🚚 Camions – Variante Sans CCC (V0)")
+                            st.markdown("### 🚚 Camions")
 
                             colA, colB = st.columns(2)
                             with colA:
@@ -1563,19 +1720,24 @@ def render_dashboard_excel():
                                 if not fc_v.empty:
                                     fc_v["Mois"] = fc_v["Mois"].astype(str)
                                     # Nom de la colonne Y (peut être 'Nombre de Camions' ou 'Camions')
-                                    y_col_cam = [c for c in fc_v.columns if c != "Mois"][0]
-                                    fc_v[y_col_cam] = pd.to_numeric(
-                                        fc_v[y_col_cam],
-                                        errors="coerce",
-                                    ).fillna(0)
+                                    y_candidates = [c for c in fc_v.columns if c != "Mois"]
+                                    y_col_cam = y_candidates[0] if y_candidates else None
+                                    if y_col_cam:
+                                        fc_v[y_col_cam] = pd.to_numeric(
+                                            fc_v[y_col_cam],
+                                            errors="coerce",
+                                        ).fillna(0)
                                 else:
-                                    y_col_cam = "Camions"
+                                    y_col_cam = None
 
-                                fig_flux_cam_v = px.area(
-                                    fc_v,
-                                    x="Mois",
-                                    y=y_col_cam,
-                                )
+                                if y_col_cam:
+                                    fig_flux_cam_v = px.area(
+                                        fc_v,
+                                        x="Mois",
+                                        y=y_col_cam,
+                                    )
+                                else:
+                                    fig_flux_cam_v = None
 
                                 if mois_pic_camions_var:
                                     fig_flux_cam_v.add_vline(
@@ -1589,118 +1751,171 @@ def render_dashboard_excel():
                                         line_color="red",
                                     )
 
-                                fig_flux_cam_v.update_layout(
-                                    margin=dict(l=10, r=10, t=30, b=40)
-                                )
-                                st.plotly_chart(
-                                    fig_flux_cam_v,
-                                    use_container_width=True,
-                                )
+                                if fig_flux_cam_v is not None:
+                                    fig_flux_cam_v.update_layout(
+                                        margin=dict(l=10, r=10, t=30, b=40)
+                                    )
+                                    st.plotly_chart(
+                                        fig_flux_cam_v,
+                                        use_container_width=True,
+                                    )
+                                else:
+                                    st.info("Aucun flux de camions disponible pour cette variante.")
 
                             # Remplissage par étage / zone
-                            st.markdown("#### Remplissage des camions par étage")
-                            if not rempl_zone_var.empty:
-                                fig_rempl_v = px.bar(
-                                    rempl_zone_var,
-                                    x="Étage - Zone",
-                                    y="Remplissage (%)",
-                                    color="Remplissage (%)",
-                                )
-                                fig_rempl_v.update_layout(
-                                    margin=dict(l=10, r=10, t=30, b=40)
-                                )
-                                st.plotly_chart(
-                                    fig_rempl_v,
-                                    use_container_width=True,
-                                )
-                            else:
-                                st.info("Aucune donnée de remplissage disponible pour cette variante.")
-
-                            # Typologie camions (variante) – même info que V0
-                            # -------------------------------------------------------
-                            # 🚚 Typologie des camions – Variante Sans CCC (structure V0)
-                            # -------------------------------------------------------
-
-                            st.markdown("## 🚚 Typologie des camions ")
-
-                            try:
-                                # Identification stricte des colonnes T et U (comme V0)
-                                col_type = bg_var.columns[19]   # colonne T
-                                col_nb   = bg_var.columns[20]   # colonne U
-
-                                df_camions_var = (
-                                    bg_var[[col_type, col_nb]]
-                                    .dropna(subset=[col_type])
-                                    .groupby(col_type, as_index=False)[col_nb]
-                                    .sum()
-                                    .rename(columns={
-                                        col_type: "Type de Camion",
-                                        col_nb:   "Nombre de Camions"
-                                    })
-                                )
-
-                                if df_camions_var.empty:
-                                    st.info("Aucun camion trouvé dans les colonnes T et U pour cette variante.")
+                            c4, c5 = st.columns(2)
+                            with c4:
+                                st.markdown("#### Remplissage des camions par étage")
+                                if not rempl_zone_var.empty:
+                                    fig_rempl_v = px.bar(
+                                        rempl_zone_var,
+                                        x="Étage - Zone",
+                                        y="Remplissage (%)",
+                                        color="Remplissage (%)",
+                                    )
+                                    fig_rempl_v.update_layout(
+                                        margin=dict(l=10, r=10, t=30, b=40)
+                                    )
+                                    st.plotly_chart(
+                                        fig_rempl_v,
+                                        use_container_width=True,
+                                    )
                                 else:
-                                    for _, row in df_camions_var.iterrows():
-                                        nom_camion = str(row["Type de Camion"]).strip()
-                                        quantite = int(row["Nombre de Camions"])
+                                    st.info("Aucune donnée de remplissage disponible pour cette variante.")
+                            with c5:
+                                # Typologie camions (variante) – même info que V0
+                                # -------------------------------------------------------
+                                # 🚚 Typologie des camions – Variante Sans CCC (structure V0)
+                                # -------------------------------------------------------
 
-                                        # Filtrer uniquement les camions connus
-                                        if nom_camion not in daba.liste_camions:
-                                            continue
+                                st.markdown("## 🚚 Typologie des camions ")
 
-                                        img_path = f"images/image_camions/{nom_camion}.png"
-                                        c_img, c_nom, c_nb = st.columns([1, 3, 1])
+                                try:
+                                    # Identification stricte des colonnes T et U (comme V0)
+                                    col_type = bg_var.columns[19]   # colonne T
+                                    col_nb   = bg_var.columns[20]   # colonne U
 
-                                        with c_img:
-                                            try:
-                                                st.image(img_path, width=70)
-                                            except:
-                                                st.write("🚚")
+                                    df_camions_var = (
+                                        bg_var[[col_type, col_nb]]
+                                        .dropna(subset=[col_type])
+                                        .groupby(col_type, as_index=False)[col_nb]
+                                        .sum()
+                                        .rename(columns={
+                                            col_type: "Type de Camion",
+                                            col_nb:   "Nombre de Camions"
+                                        })
+                                    )
 
-                                        with c_nom:
-                                            st.write(f"**{nom_camion}**")
+                                    if df_camions_var.empty:
+                                        st.info("Aucun camion trouvé dans les colonnes T et U pour cette variante.")
+                                    else:
+                                        for _, row in df_camions_var.iterrows():
+                                            nom_camion = str(row["Type de Camion"]).strip()
+                                            quantite = int(row["Nombre de Camions"])
 
-                                        with c_nb:
-                                            st.write(f"**{quantite}**")
+                                            # Filtrer uniquement les camions connus
+                                            if nom_camion not in daba.liste_camions:
+                                                continue
 
-                            except Exception as e:
-                                st.error(f"Erreur lecture typologie variante Sans CCC : {e}")
+                                            img_path = f"images/image_camions/{nom_camion}.png"
+                                            c_img, c_nom, c_nb = st.columns([1, 3, 1])
 
-                    #
+                                            with c_img:
+                                                try:
+                                                    st.image(img_path, width=70)
+                                                except:
+                                                    st.write("🚚")
+
+                                            with c_nom:
+                                                st.write(f"**{nom_camion}**")
+
+                                            with c_nb:
+                                                st.write(f"**{quantite}**")
+
+                                except Exception as e:
+                                    st.error(f"Erreur lecture typologie variante Sans CCC : {e}")
+
                     #  VARIANTE AVEC CCC  → miroir du DASHBOARD V1
-                    #
                     else:
                         # ---------------- HYPO V1 (variante) ----------------
                         with ong_hyp_v:
-                            st.markdown("### 📘 Hypothèses ")
+                            st.markdown("### 📘 Hypothèses")
+                            h1, h2 = st.columns(2)
+                            with h1:
+                                st.markdown("#### 📄 Document de source")
+                                if dpgf_date_str and dpgf_indice:
+                                    default_dpgf = f"DPGF indice {dpgf_indice} du {dpgf_date_str}"
+                                elif dpgf_date_str:
+                                    default_dpgf = f"DPGF du {dpgf_date_str}"
+                                elif dpgf_indice:
+                                    default_dpgf = f"DPGF indice {dpgf_indice}"
+                                else:
+                                    default_dpgf = ""
 
+                                st.text_area(
+                                    "DPGF + Indice :",
+                                    value=default_dpgf,
+                                    key=f"dpgf_var_{vid}",
+                                    placeholder="DPGF indice ? du ?",
+                                )
 
-                            # Paramètres CCC depuis la feuille Paramétrage de la variante
-                            st.markdown("#### Paramètres CCC ")
-                            def _val_param_ccc_var(libel):
-                                try:
-                                    lot_col_var = param_var.columns[1]
-                                    return param_var.loc[
-                                        param_var["Lot"] == libel,
-                                        lot_col_var,
-                                    ].iloc[0]
-                                except Exception:
-                                    return ""
+                                st.file_uploader(
+                                    "Veuillez joindre le fichier PIC",
+                                    key=f"pic_var_{vid}",
+                                )
 
-                            duree_ccc_v = _val_param_ccc_var("Durée de stockage CCC (en mois)")
-                            tarif_mois_v = _val_param_ccc_var("Tarif mois de stockage (en €)")
-                            frais_sup_v = _val_param_ccc_var("Frais supplémentaires/palette (en €)")
-                            frais_liv_v = _val_param_ccc_var("Frais de livraison par camion")
+                            with h2:
+                                st.markdown("#### 🕒 Hypothèse planning")
+                                st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
 
-                            st.markdown(f"- Durée stockage : **{duree_ccc_v} mois**")
-                            st.markdown(f"- Tarif de stockage : **{tarif_mois_v} €/mois**")
-                            st.markdown(f"- Frais supplémentaires/palette : **{frais_sup_v} €**")
-                            st.markdown(f"- Frais de livraison : **{frais_liv_v} €**")
+                                planning_hyp_var = st.text_area(
+                                    "Hypothèses prises pour planning :",
+                                    key=f"planning_hyp_var_{vid}",
+                                    placeholder="Décrire ici les hypothèses utilisées pour le planning…",
+                                )
 
-                            st.markdown("---")
-                            st.markdown("#### Hypothèse de base déportée par famille ")
+                                if planning_hyp_var.strip() == "":
+                                    st.markdown(
+                                        "<p style='color:red;'>Hypothèses planning non complétées</p>",
+                                        unsafe_allow_html=True,
+                                    )
+                                else:
+                                    st.markdown(
+                                        "<p style='color:green;'>Hypothèses planning complétées</p>",
+                                        unsafe_allow_html=True,
+                                    )
+
+                            h3, h4 = st.columns(2)
+                            with h3:
+                                st.markdown("#### 📄 Hypothèses de l’étude")
+                                st.markdown("- regroupement du matériel en grandes catégories")
+                                st.markdown("- conversion des conditionnements en équivalent palette")
+                                st.markdown("- 2 phases de travaux par étage")
+
+                            with h4:
+                                # Paramètres CCC depuis la feuille Paramétrage de la variante
+                                st.markdown("#### ⚙️ Paramètres CCC")
+                                def _val_param_ccc_var(libel):
+                                    try:
+                                        lot_col_var = param_var.columns[1]
+                                        return param_var.loc[
+                                            param_var["Lot"] == libel,
+                                            lot_col_var,
+                                        ].iloc[0]
+                                    except Exception:
+                                        return ""
+
+                                duree_ccc_v = _val_param_ccc_var("Durée de stockage CCC (en mois)")
+                                tarif_mois_v = _val_param_ccc_var("Tarif mois de stockage (en €)")
+                                frais_sup_v = _val_param_ccc_var("Frais supplémentaires/palette (en €)")
+                                frais_liv_v = _val_param_ccc_var("Frais de livraison par camion")
+
+                                st.markdown(f"- Durée stockage : **{duree_ccc_v} mois**")
+                                st.markdown(f"- Tarif de stockage : **{tarif_mois_v} €/mois**")
+                                st.markdown(f"- Frais supplémentaires/palette : **{frais_sup_v} €**")
+                                st.markdown(f"- Frais de livraison : **{frais_liv_v} €**")
+
+                            st.markdown("#### Hypothèse de base déportée par famille")
 
                             if (
                                 {"Nom de l'élément", "Utilisation d'une CCC"}.issubset(src_var.columns)
@@ -1715,13 +1930,13 @@ def render_dashboard_excel():
                                     .str.lower()
                                     .isin(["oui", "yes", "y", "1"])
                                 )
-
+    
                                 df_yes_v = (
                                     df_src_loc.groupby("Nom de l'élément", as_index=False)["use_ccc"]
                                     .any()
                                     .rename(columns={"Nom de l'élément": "Famille"})
                                 )
-
+    
                                 df_qty_v = (
                                     bg_var[["Matériel CCC", "Nombre de matériels CCC"]]
                                     .dropna(subset=["Matériel CCC"])
@@ -1734,23 +1949,29 @@ def render_dashboard_excel():
                                         }
                                     )
                                 )
-
+    
                                 df_merge_v = pd.merge(df_yes_v, df_qty_v, on="Famille", how="left")
-                                df_merge_v["Quantité"] = df_merge_v["Quantité"].fillna(0)
+                                df_merge_v["Quantité"] = pd.to_numeric(
+                                    df_merge_v["Quantité"], errors="coerce"
+                                ).fillna(0)
+                                df_merge_v = _coerce_quantite_cols(df_merge_v)
                                 df_merge_v["Stocké en CCC ?"] = df_merge_v["use_ccc"].apply(
                                     lambda x: "✔️" if x else "❌"
                                 )
-
+    
+                                df_merge_v = _clean_ccc_familles(df_merge_v)
+                                display_df_v = df_merge_v[["Famille", "Stocké en CCC ?", "Quantité"]]
                                 st.dataframe(
-                                    df_merge_v[["Famille", "Stocké en CCC ?", "Quantité"]],
+                                    display_df_v,
                                     use_container_width=True,
+                                    height=_df_height(len(display_df_v)),
                                 )
                             else:
                                 st.info(
                                     "Colonnes nécessaires introuvables dans Tableau Source / Bilan Graphique de la variante."
                                 )
-
-                        # ---------------- PALETTES V1 (variante) ----------------
+    
+                            # ---------------- PALETTES V1 (variante) ----------------
                         with ong_pal_v:
                             st.markdown("### 📦 Palettes ")
 
@@ -1768,40 +1989,57 @@ def render_dashboard_excel():
 
                             c1, c2 = st.columns(2)
 
-                            # Matériaux stockés en CCC (variante)
+                            # Palettes par famille
                             with c1:
-                                st.markdown("#### Matériaux stockés en CCC ")
-
-                                mat_col_v = None
-                                qty_col_v = None
-                                for c in bg_var.columns:
-                                    cname = str(c).lower()
-                                    if cname.startswith("matériel ccc"):
-                                        mat_col_v = c
-                                    if cname.startswith("nombre de matériels ccc"):
-                                        qty_col_v = c
-
-                                if mat_col_v and qty_col_v:
-                                    df_v1_mat_var = (
-                                        bg_var[[mat_col_v, qty_col_v]]
-                                        .dropna(subset=[mat_col_v])
-                                        .groupby(mat_col_v, as_index=False)[qty_col_v]
+                                st.markdown("#### Palettes par famille")
+                                col_fam_v = (
+                                    _find_col(src_var.columns, "Nom de l'element")
+                                    or _find_col(src_var.columns, "Nom de l'élément")
+                                    or _find_col(src_var.columns, "Nom de l'élement")
+                                )
+                                col_pal_eq_v = _find_col(src_var.columns, "Nombre palettes equivalent total")
+                                if col_fam_v and col_pal_eq_v:
+                                    df_fam_pal_v = src_var[[col_fam_v, col_pal_eq_v]].copy()
+                                    df_fam_pal_v = df_fam_pal_v.dropna(subset=[col_fam_v])
+                                    df_fam_pal_v = df_fam_pal_v[
+                                        ~df_fam_pal_v[col_fam_v].astype(str).str.lower().str.startswith("stock ccc")
+                                    ]
+                                    df_fam_pal_v[col_pal_eq_v] = pd.to_numeric(
+                                        df_fam_pal_v[col_pal_eq_v], errors="coerce"
+                                    ).fillna(0)
+                                    df_fam_pal_v = (
+                                        df_fam_pal_v.groupby(col_fam_v, as_index=False)[col_pal_eq_v]
                                         .sum()
+                                        .sort_values(col_pal_eq_v, ascending=False)
                                     )
-
-                                    fig_mat_v1_var = px.bar(
-                                        df_v1_mat_var,
-                                        x=qty_col_v,
-                                        y=mat_col_v,
+                                    fig_fam_pal_v = px.bar(
+                                        df_fam_pal_v,
+                                        x=col_pal_eq_v,
+                                        y=col_fam_v,
                                         orientation="h",
-                                        title="Répartition des matériaux stockés en CCC ",
+                                        color=col_fam_v,
+                                        color_discrete_sequence=[
+                                            "#F4A261",
+                                            "#2A9D8F",
+                                            "#E76F51",
+                                            "#264653",
+                                            "#8AB17D",
+                                            "#F1C453",
+                                            "#6D597A",
+                                        ],
+                                    )
+                                    fig_fam_pal_v.update_layout(
+                                        showlegend=False,
+                                        yaxis={"categoryorder": "total ascending"},
+                                        margin=dict(l=10, r=10, t=20, b=10),
                                     )
                                     st.plotly_chart(
-                                        fig_mat_v1_var,
+                                        fig_fam_pal_v,
+                                        key=f"pal_fam_v1_{vid}",
                                         use_container_width=True,
                                     )
                                 else:
-                                    st.info("Colonnes Matériel CCC absentes dans le BG de la variante.")
+                                    st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
                             # Flux palettes (identique logique V1)
                             with c2:
@@ -1846,21 +2084,56 @@ def render_dashboard_excel():
                                 )
 
                             # Répartition palettes par étage / zone
-                            st.markdown("#### Répartition des palettes par étage / zone ")
-                            fig_pal_v1_var = px.bar(
-                                palettes_zone_var,
-                                x="Étage - Zone",
-                                y="Palettes",
-                                color="Palettes",
-                            )
-                            st.plotly_chart(
-                                fig_pal_v1_var,
-                                use_container_width=True,
-                            )
+                            c3, c4 = st.columns(2)
+                            with c3:
+                                st.markdown("#### Matériaux stockés en CCC")
+
+                                mat_col_v = None
+                                qty_col_v = None
+                                for c in bg_var.columns:
+                                    cname = str(c).lower()
+                                    if cname.startswith("matériel ccc"):
+                                        mat_col_v = c
+                                    if cname.startswith("nombre de matériels ccc"):
+                                        qty_col_v = c
+
+                                if mat_col_v and qty_col_v:
+                                    df_v1_mat_var = (
+                                        bg_var[[mat_col_v, qty_col_v]]
+                                        .dropna(subset=[mat_col_v])
+                                        .groupby(mat_col_v, as_index=False)[qty_col_v]
+                                        .sum()
+                                    )
+
+                                    st.markdown("#### Répartition des matériaux stockés en CCC")
+                                    fig_mat_v1_var = px.bar(
+                                        df_v1_mat_var,
+                                        x=qty_col_v,
+                                        y=mat_col_v,
+                                        orientation="h",
+                                    )
+                                    st.plotly_chart(
+                                        fig_mat_v1_var,
+                                        use_container_width=True,
+                                    )
+                                else:
+                                    st.info("Colonnes Matériel CCC absentes dans le BG de la variante.")
+                            with c4:
+                                st.markdown("#### Répartition des palettes par étage / zone")
+                                fig_pal_v1_var = px.bar(
+                                    palettes_zone_var,
+                                    x="Étage - Zone",
+                                    y="Palettes",
+                                    color="Palettes",
+                                )
+                                st.plotly_chart(
+                                    fig_pal_v1_var,
+                                    use_container_width=True,
+                                )
 
                         # ---------------- CAMIONS V1 (variante) ----------------
                         with ong_cam_v:
-                            st.markdown("### 🚚 Camions – Variante Avec CCC (V1)")
+                            st.markdown("### 🚚 Camions")
 
                             colA, colB = st.columns(2)
                             with colA:
@@ -1878,9 +2151,9 @@ def render_dashboard_excel():
 
                             # Camions par étage / zone CCC
                             with c1:
-                                st.markdown("#### Camions par étage (CCC – Variante)")
+                                st.markdown("#### Camions par étage")
                                 if not camions_zone_var.empty:
-                                    # colonne Y 'Camions' (pipeline_avec_ccc)
+# colonne Y 'Camions' (pipeline_avec_ccc)
                                     y_col_zone = [
                                         c for c in camions_zone_var.columns if c != "Étage - Zone"
                                     ][0]
@@ -1899,7 +2172,7 @@ def render_dashboard_excel():
 
                             # Flux camions CCC
                             with c2:
-                                st.markdown("#### Flux mensuel de camions CCC ")
+                                st.markdown("#### Flux mensuel de camions")
 
                                 if not flux_camions_var.empty:
                                     fc_v1 = flux_camions_var.copy()
@@ -1940,79 +2213,79 @@ def render_dashboard_excel():
                                 else:
                                     st.info("Aucun flux de camions CCC pour cette variante.")
 
-                            # Remplissage CCC
-                            st.markdown("#### Remplissage par étage (CCC – Variante)")
-                            if not rempl_zone_var.empty:
-                                fig_r_ccc_v = px.bar(
-                                    rempl_zone_var,
-                                    x="Étage - Zone",
-                                    y="Remplissage (%)",
-                                    color="Remplissage (%)",
-                                )
-                                st.plotly_chart(
-                                    fig_r_ccc_v,
-                                    use_container_width=True,
-                                )
-                            else:
-                                st.info("Aucune donnée de remplissage CCC pour cette variante.")
-
-                            # Typologie camions CCC (variante)
-                            # -------------------------------------------------------
-                            # 🚚 Typologie des camions – Variante Avec CCC (structure V1)
-                            # -------------------------------------------------------
-
-                            st.markdown("## 🚚 Typologie des camions – Variante Avec CCC")
-
-                            try:
-                                # Colonnes X et Y index 23 et 24 (comme V1)
-                                col_type = bg_var.columns[23]   # colonne X
-                                col_nb   = bg_var.columns[24]   # colonne Y
-
-                                df_camions_ccc_var = (
-                                    bg_var[[col_type, col_nb]]
-                                    .dropna(subset=[col_type])
-                                    .groupby(col_type, as_index=False)[col_nb]
-                                    .sum()
-                                    .rename(columns={
-                                        col_type: "Type de Camion",
-                                        col_nb:   "Nombre de Camions"
-                                    })
-                                )
-
-                                if df_camions_ccc_var.empty:
-                                    st.info("Aucun camion (CCC) trouvé dans les colonnes X et Y pour cette variante.")
+                            c3, c4 = st.columns(2)
+                            with c3:
+                                # Remplissage CCC
+                                st.markdown("#### Remplissage par étage")
+                                if not rempl_zone_var.empty:
+                                    fig_r_ccc_v = px.bar(
+                                        rempl_zone_var,
+                                        x="Étage - Zone",
+                                        y="Remplissage (%)",
+                                        color="Remplissage (%)",
+                                    )
+                                    st.plotly_chart(
+                                        fig_r_ccc_v,
+                                        use_container_width=True,
+                                    )
                                 else:
-                                    for _, row in df_camions_ccc_var.iterrows():
-                                        nom_camion = str(row["Type de Camion"]).strip()
-                                        quantite = int(row["Nombre de Camions"])
+                                    st.info("Aucune donnée de remplissage CCC pour cette variante.")
 
-                                        # Filtrer uniquement les camions connus
-                                        if nom_camion not in daba.liste_camions:
-                                            continue
+                            with c4:
+                                # Typologie camions CCC (variante)
+                                # -------------------------------------------------------
+                                # 🚚 Typologie des camions – Variante Avec CCC (structure V1)
+                                # -------------------------------------------------------
 
-                                        img_path = f"images/image_camions/{nom_camion}.png"
-                                        c_img, c_nom, c_nb = st.columns([1, 3, 1])
+                                st.markdown("## 🚚 Typologie des camions")
 
-                                        with c_img:
-                                            try:
-                                                st.image(img_path, width=70)
-                                            except:
-                                                st.write("🚚")
+                                try:
+                                    # Colonnes X et Y index 23 et 24 (comme V1)
+                                    col_type = bg_var.columns[23]   # colonne X
+                                    col_nb   = bg_var.columns[24]   # colonne Y
 
-                                        with c_nom:
-                                            st.write(f"**{nom_camion}**")
+                                    df_camions_ccc_var = (
+                                        bg_var[[col_type, col_nb]]
+                                        .dropna(subset=[col_type])
+                                        .groupby(col_type, as_index=False)[col_nb]
+                                        .sum()
+                                        .rename(columns={
+                                            col_type: "Type de Camion",
+                                            col_nb:   "Nombre de Camions"
+                                        })
+                                    )
 
-                                        with c_nb:
-                                            st.write(f"**{quantite}**")
+                                    if df_camions_ccc_var.empty:
+                                        st.info("Aucun camion (CCC) trouvé dans les colonnes X et Y pour cette variante.")
+                                    else:
+                                        for _, row in df_camions_ccc_var.iterrows():
+                                            nom_camion = str(row["Type de Camion"]).strip()
+                                            quantite = int(row["Nombre de Camions"])
 
-                            except Exception as e:
-                                st.error(f"Erreur lecture typologie variante Avec CCC : {e}")
+                                            # Filtrer uniquement les camions connus
+                                            if nom_camion not in daba.liste_camions:
+                                                continue
+
+                                            img_path = f"images/image_camions/{nom_camion}.png"
+                                            c_img, c_nom, c_nb = st.columns([1, 3, 1])
+
+                                            with c_img:
+                                                try:
+                                                    st.image(img_path, width=70)
+                                                except:
+                                                    st.write("🚚")
+
+                                            with c_nom:
+                                                st.write(f"**{nom_camion}**")
+
+                                            with c_nb:
+                                                st.write(f"**{quantite}**")
+
+                                except Exception as e:
+                                    st.error(f"Erreur lecture typologie variante Avec CCC : {e}")
 
 
 
-
-
-        # COMPARATIF — ONGLET COMPLET
         with tab_comp:
             st.subheader("Comparatif multi-versions")
 
@@ -2199,6 +2472,24 @@ def render_dashboard_excel():
                 except Exception:
                     return "—"
 
+            def fmt_signed_percent(x):
+                try:
+                    sign = "+" if x >= 0 else "-"
+                    return f"{sign}{abs(x) * 100:.0f} %"
+                except Exception:
+                    return "—"
+
+            def fmt_arrow_percent(x, positive_is_good: bool) -> str:
+                try:
+                    val = float(x) * 100
+                except Exception:
+                    return "<span style='color:#9AA0A6'>—</span>"
+                is_pos = val >= 0
+                arrow = "↑" if is_pos else "↓"
+                sign = "+" if is_pos else "-"
+                good = is_pos if positive_is_good else not is_pos
+                color = "#0F9D58" if good else "#DB4437"
+                return f"<span style='color:{color}; font-weight:600;'>{arrow} {sign}{abs(val):.0f} %</span>"
 
             def fmt_euro(x):
                 try:
@@ -2223,36 +2514,50 @@ def render_dashboard_excel():
 
                 with col1:
                     with st.container(border=True):
-                        st.markdown("**Stock**")
+                        st.markdown("<span style='color:gray'>% Stock CCC</span>", unsafe_allow_html=True)
                         st.markdown(f"<h3>{fmt_percent(ccc.get('% Stock CCC'))}</h3>", unsafe_allow_html=True)
-                        st.markdown("<span style='color:gray'>Réduction camions</span>", unsafe_allow_html=True)
-                        st.markdown(f"<h3>{fmt_percent(ccc.get('% réduction Camions'))}</h3>", unsafe_allow_html=True)
 
                 with col2:
                     with st.container(border=True):
-                        st.markdown("**Flux**")
-                        st.markdown("<span style='color:gray'>Remplissage moyen</span>", unsafe_allow_html=True)
+                        st.markdown("**KPI camions**")
+                        st.markdown("<span style='color:gray'>Réduction camions</span>", unsafe_allow_html=True)
+                        red_val = ccc.get("% réduction Camions")
+                        if "V0" in data_versions and v != "V0":
+                            try:
+                                base = data_versions["V0"]["total_camions"]
+                                curr = data_versions[v]["total_camions"]
+                                red_val = (curr - base) / base if base else None
+                            except Exception:
+                                pass
                         st.markdown(
-                            f"<h3>{fmt_percent(ccc.get('% remplissage moyen des camions'))}</h3>",
-                            unsafe_allow_html=True
+                            fmt_arrow_percent(red_val, positive_is_good=False),
+                            unsafe_allow_html=True,
                         )
-                        st.markdown("<span style='color:gray'>Stockage</span>", unsafe_allow_html=True)
+                        st.markdown("<span style='color:gray'>Remplissage moyen des camions</span>", unsafe_allow_html=True)
                         st.markdown(
-                            f"<h3>{fmt_euro(ccc.get('Coût CCC stockage'))}</h3>",
-                            unsafe_allow_html=True
+                            fmt_arrow_percent(ccc.get("% remplissage moyen des camions"), positive_is_good=True),
+                            unsafe_allow_html=True,
                         )
 
                 with col3:
                     with st.container(border=True):
-                        st.markdown("**Coûts**")
-                        st.markdown("<span style='color:gray'>Livraison</span>", unsafe_allow_html=True)
-                        st.markdown(
-                            f"<h3>{fmt_euro(ccc.get('Coût CCC livraison'))}</h3>",
-                            unsafe_allow_html=True
-                        )
+                        st.markdown("**KPI Coûts**")
+                        c_cost1, c_cost2 = st.columns(2)
+                        with c_cost1:
+                            st.markdown("<span style='color:gray'>Stockage</span>", unsafe_allow_html=True)
+                            st.markdown(
+                                f"<h3>{fmt_euro(ccc.get('Coût CCC stockage'))}</h3>",
+                                unsafe_allow_html=True
+                            )
+                        with c_cost2:
+                            st.markdown("<span style='color:gray'>Livraison</span>", unsafe_allow_html=True)
+                            st.markdown(
+                                f"<h3>{fmt_euro(ccc.get('Coût CCC livraison'))}</h3>",
+                                unsafe_allow_html=True
+                            )
                         st.markdown("<span style='color:gray'>Total</span>", unsafe_allow_html=True)
                         st.markdown(
-                            f"<h2>{fmt_euro(ccc.get('Coût CCC Total'))}</h2>",
+                            f"<h2 style='color:#0F9D58'>{fmt_euro(ccc.get('Coût CCC Total'))}</h2>",
                             unsafe_allow_html=True
                         )
 
@@ -2319,6 +2624,7 @@ def render_dashboard_excel():
                 )
 
                 df_final = pd.DataFrame({"Famille": familles})
+                df_final = _clean_ccc_familles(df_final)
 
                 for v, dv in data_versions.items():
 
@@ -2361,7 +2667,11 @@ def render_dashboard_excel():
                     df_final[flag_col] = df_final[qty_col].apply(lambda x: "✔️" if x > 0 else "❌")
 
                 # 🔥 CETTE LIGNE EST OBLIGATOIRE
-                st.dataframe(df_final, use_container_width=True)
+                st.dataframe(
+                    df_final,
+                    use_container_width=True,
+                    height=_df_height(len(df_final)),
+                )
 
 
                                             
@@ -2382,50 +2692,54 @@ def render_dashboard_excel():
                             f"{dv['total_palettes']:,.0f}".replace(",", " "),
                         )
 
-                # Palettes par étage / zone
-                df_pal = pd.concat(
-                    [
-                        dv["palettes_zone"].assign(Version=v)
-                        for v, dv in data_versions.items()
-                        if not dv["palettes_zone"].empty
-                    ],
-                    ignore_index=True,
-                )
+                pal_left, pal_right = st.columns(2)
 
-                if not df_pal.empty:
-                    fig_pal = px.bar(
-                        df_pal,
-                        x="Étage - Zone",
-                        y="Palettes",
-                        color="Version",
-                        barmode="group",
-                        title="Palettes par étage / zone",
+                # Palettes par étage / zone
+                with pal_left:
+                    df_pal = pd.concat(
+                        [
+                            dv["palettes_zone"].assign(Version=v)
+                            for v, dv in data_versions.items()
+                            if not dv["palettes_zone"].empty
+                        ],
+                        ignore_index=True,
                     )
-                    st.plotly_chart(fig_pal, use_container_width=True)
-                else:
-                    st.info("Aucune donnée palettes pour ces versions.")
+
+                    if not df_pal.empty:
+                        fig_pal = px.bar(
+                            df_pal,
+                            x="Étage - Zone",
+                            y="Palettes",
+                            color="Version",
+                            barmode="group",
+                            title="Palettes par étage / zone",
+                        )
+                        st.plotly_chart(fig_pal, use_container_width=True)
+                    else:
+                        st.info("Aucune donnée palettes pour ces versions.")
 
                 # Flux palettes
-                df_flux_pal = pd.concat(
-                    [
-                        dv["flux_palettes"].assign(Version=v)
-                        for v, dv in data_versions.items()
-                        if not dv["flux_palettes"].empty
-                    ],
-                    ignore_index=True,
-                )
-
-                if not df_flux_pal.empty:
-                    fig_flux_pal = px.line(
-                        df_flux_pal,
-                        x="Mois",
-                        y="Volume (nombre de palettes équivalentes)",
-                        color="Version",
-                        title="Flux mensuel de palettes",
+                with pal_right:
+                    df_flux_pal = pd.concat(
+                        [
+                            dv["flux_palettes"].assign(Version=v)
+                            for v, dv in data_versions.items()
+                            if not dv["flux_palettes"].empty
+                        ],
+                        ignore_index=True,
                     )
-                    st.plotly_chart(fig_flux_pal, use_container_width=True)
-                else:
-                    st.info("Aucun flux palettes pour ces versions.")
+
+                    if not df_flux_pal.empty:
+                        fig_flux_pal = px.line(
+                            df_flux_pal,
+                            x="Mois",
+                            y="Volume (nombre de palettes équivalentes)",
+                            color="Version",
+                            title="Flux mensuel de palettes",
+                        )
+                        st.plotly_chart(fig_flux_pal, use_container_width=True)
+                    else:
+                        st.info("Aucun flux palettes pour ces versions.")
 
             # ONGLET CAMIONS
             with ong_cam_comp:
@@ -2446,78 +2760,85 @@ def render_dashboard_excel():
                         )
 
                 st.markdown("---")
-                st.markdown("### 🚚 Camions par étage / zone")
+                cam_left, cam_right = st.columns(2)
 
-                df_cam = pd.concat(
-                    [
-                        dv["camions_zone"].assign(Version=v)
-                        for v, dv in data_versions.items()
-                        if not dv["camions_zone"].empty
-                    ],
-                    ignore_index=True,
-                )
+                with cam_left:
+                    st.markdown("### 🚚 Camions par étage / zone")
 
-                if not df_cam.empty:
-                    fig_cam = px.bar(
-                        df_cam,
-                        x="Étage - Zone",
-                        y="Camions",
-                        color="Version",
-                        barmode="group",
-                        title="Camions par étage / zone",
+                    df_cam = pd.concat(
+                        [
+                            dv["camions_zone"].assign(Version=v)
+                            for v, dv in data_versions.items()
+                            if not dv["camions_zone"].empty
+                        ],
+                        ignore_index=True,
                     )
-                    st.plotly_chart(fig_cam, use_container_width=True)
-                else:
-                    st.info("Aucune donnée camions par étage pour ces versions.")
+
+                    if not df_cam.empty:
+                        fig_cam = px.bar(
+                            df_cam,
+                            x="Étage - Zone",
+                            y="Camions",
+                            color="Version",
+                            barmode="group",
+                            title="Camions par étage / zone",
+                        )
+                        st.plotly_chart(fig_cam, use_container_width=True)
+                    else:
+                        st.info("Aucune donnée camions par étage pour ces versions.")
+
+                with cam_right:
+                    st.markdown("### 📈 Flux mensuel de camions")
+
+                    df_flux_cam = pd.concat(
+                        [
+                            dv["flux_camions"].assign(Version=v)
+                            for v, dv in data_versions.items()
+                            if not dv["flux_camions"].empty
+                        ],
+                        ignore_index=True,
+                    )
+
+                    if not df_flux_cam.empty:
+                        fig_flux_cam = px.line(
+                            df_flux_cam,
+                            x="Mois",
+                            y="Camions",
+                            color="Version",
+                            title="Flux mensuel de camions",
+                        )
+                        st.plotly_chart(fig_flux_cam, use_container_width=True)
+                    else:
+                        st.info("Aucun flux camions pour ces versions.")
 
                 st.markdown("---")
-                st.markdown("### 📈 Flux mensuel de camions")
+                rem_left, rem_right = st.columns(2)
+                with rem_left:
+                    st.markdown("### 📦 Remplissage des camions par étage / zone")
 
-                df_flux_cam = pd.concat(
-                    [
-                        dv["flux_camions"].assign(Version=v)
-                        for v, dv in data_versions.items()
-                        if not dv["flux_camions"].empty
-                    ],
-                    ignore_index=True,
-                )
-
-                if not df_flux_cam.empty:
-                    fig_flux_cam = px.line(
-                        df_flux_cam,
-                        x="Mois",
-                        y="Camions",
-                        color="Version",
-                        title="Flux mensuel de camions",
+                    df_rempl = pd.concat(
+                        [
+                            dv["rempl_zone"].assign(Version=v)
+                            for v, dv in data_versions.items()
+                            if not dv["rempl_zone"].empty
+                        ],
+                        ignore_index=True,
                     )
-                    st.plotly_chart(fig_flux_cam, use_container_width=True)
-                else:
-                    st.info("Aucun flux camions pour ces versions.")
 
-                st.markdown("---")
-                st.markdown("### 📦 Remplissage des camions par étage / zone")
-
-                df_rempl = pd.concat(
-                    [
-                        dv["rempl_zone"].assign(Version=v)
-                        for v, dv in data_versions.items()
-                        if not dv["rempl_zone"].empty
-                    ],
-                    ignore_index=True,
-                )
-
-                if not df_rempl.empty:
-                    fig_rempl = px.bar(
-                        df_rempl,
-                        x="Étage - Zone",
-                        y="Remplissage (%)",
-                        color="Version",
-                        barmode="group",
-                        title="Remplissage des camions par étage / zone",
-                    )
-                    st.plotly_chart(fig_rempl, use_container_width=True)
-                else:
-                    st.info("Aucune donnée de remplissage disponible pour ces versions.")
+                    if not df_rempl.empty:
+                        fig_rempl = px.bar(
+                            df_rempl,
+                            x="Étage - Zone",
+                            y="Remplissage (%)",
+                            color="Version",
+                            barmode="group",
+                            title="Remplissage des camions par étage / zone",
+                        )
+                        st.plotly_chart(fig_rempl, use_container_width=True)
+                    else:
+                        st.info("Aucune donnée de remplissage disponible pour ces versions.")
+                with rem_right:
+                    st.empty()
 
 
 
