@@ -298,6 +298,22 @@ def render_dashboard_excel():
             "camions_type": base["camions_type"],  # typologie identique
         }
 
+    def _clean_ccc_familles(df: pd.DataFrame, col: str = "Famille") -> pd.DataFrame:
+        exclude = {"stock ccc production", "stock ccc terminaux"}
+        if col not in df.columns:
+            return df
+        mask = (
+            df[col]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .isin(exclude)
+        )
+        return df.loc[~mask].copy()
+
+    def _df_height(n_rows: int, row_h: int = 32, min_h: int = 180, max_h: int = 700) -> int:
+        return max(min_h, min(max_h, (n_rows + 1) * row_h))
+
     #
     # 3 bis) Préparation des données de base via pipelines
     #
@@ -485,7 +501,13 @@ def render_dashboard_excel():
                         df_merge["Quantité"] = df_merge["Quantité"].fillna(0)
                         df_merge["Stocké en CCC ?"] = df_merge["use_ccc"].apply(lambda x: "✔️" if x else "❌")
 
-                        st.dataframe(df_merge[["Famille", "Stocké en CCC ?", "Quantité"]], use_container_width=True)
+                        df_merge = _clean_ccc_familles(df_merge)
+                        display_df = df_merge[["Famille", "Stocké en CCC ?", "Quantité"]]
+                        st.dataframe(
+                            display_df,
+                            use_container_width=True,
+                            height=_df_height(len(display_df)),
+                        )
 
                     else:
                         st.info("Colonnes nécessaires introuvables dans Tableau Source / BG")
@@ -1738,9 +1760,12 @@ def render_dashboard_excel():
                                     lambda x: "✔️" if x else "❌"
                                 )
 
+                                df_merge_v = _clean_ccc_familles(df_merge_v)
+                                display_df_v = df_merge_v[["Famille", "Stocké en CCC ?", "Quantité"]]
                                 st.dataframe(
-                                    df_merge_v[["Famille", "Stocké en CCC ?", "Quantité"]],
+                                    display_df_v,
                                     use_container_width=True,
+                                    height=_df_height(len(display_df_v)),
                                 )
                             else:
                                 st.info(
@@ -2323,6 +2348,7 @@ def render_dashboard_excel():
                 )
 
                 df_final = pd.DataFrame({"Famille": familles})
+                df_final = _clean_ccc_familles(df_final)
 
                 for v, dv in data_versions.items():
 
@@ -2365,7 +2391,11 @@ def render_dashboard_excel():
                     df_final[flag_col] = df_final[qty_col].apply(lambda x: "✔️" if x > 0 else "❌")
 
                 # 🔥 CETTE LIGNE EST OBLIGATOIRE
-                st.dataframe(df_final, use_container_width=True)
+                st.dataframe(
+                    df_final,
+                    use_container_width=True,
+                    height=_df_height(len(df_final)),
+                )
 
 
                                             
