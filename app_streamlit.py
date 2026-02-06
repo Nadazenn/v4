@@ -303,16 +303,7 @@ elif menu == "Données":
             st.success(f"Indice DPGF enregistré : {d['dpgf_indice']}")
             d["show_popup_dpgf"] = False
 
-    dpgf_date_default = d.get("dpgf_date", None)
-    if isinstance(dpgf_date_default, str) and dpgf_date_default:
-        try:
-            dpgf_date_default = datetime.strptime(dpgf_date_default, "%d/%m/%Y").date()
-        except Exception:
-            dpgf_date_default = None
-    if dpgf_date_default is None:
-        dpgf_date_default = date.today()
-
-    d["dpgf_date"] = st.date_input("Date du DPGF (JJ/MM/AAAA) :", value=dpgf_date_default)
+    d["dpgf_date"] = d.get("dpgf_date")
     st.session_state["dpgf_indice"] = d.get("dpgf_indice", "")
     st.session_state["dpgf_date"] = d.get("dpgf_date")
 #  MODE B — Télécharger → Modifier dans Excel → Ré-uploader 
@@ -612,7 +603,20 @@ elif menu == "Dashboard":
         index=default_mode,
         horizontal=True,
     )
-    if data_mode == "Excel (Bilan Graphique)":
+
+    if data_mode == "Visualiser un anciens Dahsboard":
+        choix_ccc = st.radio(
+            "As-tu utilisé une CCC ?",
+            ["Oui", "Non"],
+            horizontal=True,
+            key="ancien_dashboard_ccc",
+        )
+        # Règle demandée : Oui => V1 (avec CCC), Non => V0 (sans CCC)
+        use_ccc_override = True if choix_ccc == "Oui" else False
+        st.session_state.setdefault("parametrage", {})["use_ccc"] = use_ccc_override
+        # Forcer l'import d'un Excel, même si un fichier existe déjà
+        st.session_state["pilotage_file"] = None
+
         from dashboard import render_dashboard_excel
         render_dashboard_excel()
         st.stop()
@@ -3675,9 +3679,10 @@ elif menu == "Dashboard":
                     return "<span style='color:#9AA0A6'>—</span>"
                 is_pos = val >= 0
                 arrow = "↑" if is_pos else "↓"
+                sign = "+" if is_pos else "-"
                 good = is_pos if positive_is_good else not is_pos
                 color = "#0F9D58" if good else "#DB4437"
-                return f"<span style='color:{color}; font-weight:600;'>{arrow} {val:.0f} %</span>"
+                return f"<span style='color:{color}; font-weight:600;'>{arrow} {sign}{abs(val):.0f} %</span>"
 
             def fmt_euro(x):
                 try:
