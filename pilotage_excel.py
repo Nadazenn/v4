@@ -41,14 +41,20 @@ def build_repartition_df(
     if not etage_col or not zone_col:
         raise ValueError(f"Colonnes manquantes dans planning: {list(planning_df.columns)}")
 
+    lot_col = _find_col(bordereau_df.columns, "Lot")
+    group_cols = [cat_col]
+    if lot_col:
+        group_cols = [lot_col, cat_col]
+
     grouped = (
         bordereau_df
-        .groupby(cat_col, as_index=False)[qty_col]
+        .groupby(group_cols, as_index=False)[qty_col]
         .sum()
     )
-    grouped = grouped.rename(
-        columns={cat_col: "Catégorie Prédite", qty_col: "Quantité"}
-    )
+    rename_map = {cat_col: "Catégorie Prédite", qty_col: "Quantité"}
+    if lot_col:
+        rename_map[lot_col] = "Lot"
+    grouped = grouped.rename(columns=rename_map)
     grouped["Quantité"] = pd.to_numeric(
         grouped["Quantité"], errors="coerce"
     ).fillna(0).astype(int)
@@ -115,33 +121,43 @@ def build_donnees_grid(
     zones = planning_df[zone_col].tolist()
     nbzones = len(etages)
 
+    has_lot = "Lot" in repart_df.columns
+    zone_start_idx = 5 if has_lot else 4
+
     # Colonnes numerotees (meme rendu que l'import Excel)
-    n_cols = 4 + nbzones + 2  # col4 = Reste, + zones, + Exclus + Commentaires
+    # Sans lot : [.., Categorie, Quantite, Reste, zones..., Exclus, Commentaires]
+    # Avec lot  : [.., Categorie, Lot, Quantite, Reste, zones..., Exclus, Commentaires]
+    n_cols = zone_start_idx + nbzones + 2
     columns = [str(i) for i in range(1, n_cols + 1)]
     rows = []
 
     # Ligne 1 : titre + Etage + en-tetes zones
     row0 = [""] * n_cols
     row0[1] = "Repartition faite de maniere proportionnelle"
-    row0[3] = "Etage"
+    row0[zone_start_idx - 1] = "Etage"
     for i, etage in enumerate(etages):
-        row0[4 + i] = etage
-    row0[4 + nbzones] = "Exclus"
-    row0[5 + nbzones] = "Commentaires"
+        row0[zone_start_idx + i] = etage
+    row0[zone_start_idx + nbzones] = "Exclus"
+    row0[zone_start_idx + nbzones + 1] = "Commentaires"
     rows.append(row0)
 
-    # Ligne 2 : Categorie / Quantite / Zone + zones
+    # Ligne 2 : Categorie / (Lot) / Quantite / Zone + zones
     row1 = [""] * n_cols
     row1[1] = "Catégorie"
-    row1[2] = "Quantité"
-    row1[3] = "Zone"
+    if has_lot:
+        row1[2] = "Lot"
+        row1[3] = "Quantité"
+        row1[4] = "Zone"
+    else:
+        row1[2] = "Quantité"
+        row1[3] = "Zone"
     for i, zone in enumerate(zones):
-        row1[4 + i] = zone
+        row1[zone_start_idx + i] = zone
     rows.append(row1)
 
     # Ligne 3 : libelle "Repartition" (colonne reste)
     row2 = [""] * n_cols
-    row2[3] = "Repartition"
+    row2[zone_start_idx - 1] = "Repartition"
     rows.append(row2)
 
     # Lignes donnees
@@ -152,13 +168,18 @@ def build_donnees_grid(
     for _, r in repart_df.iterrows():
         row = [""] * n_cols
         row[1] = r.get("Categorie Predite", "")
-        row[2] = r.get("Quantite", "")
-        row[3] = r.get("Reste", "")
+        if has_lot:
+            row[2] = r.get("Lot", "")
+            row[3] = r.get("Quantite", "")
+            row[4] = r.get("Reste", "")
+        else:
+            row[2] = r.get("Quantite", "")
+            row[3] = r.get("Reste", "")
         for i, col in enumerate(zone_cols):
             if col in repart_df.columns:
-                row[4 + i] = r.get(col, "")
-        row[4 + nbzones] = r.get("Exclus", "")
-        row[5 + nbzones] = r.get("Commentaires", "")
+                row[zone_start_idx + i] = r.get(col, "")
+        row[zone_start_idx + nbzones] = r.get("Exclus", "")
+        row[zone_start_idx + nbzones + 1] = r.get("Commentaires", "")
         rows.append(row)
 
     return pd.DataFrame(rows, columns=columns)
@@ -207,13 +228,17 @@ def build_tableau_source(
         cur = conn.cursor()
 
         # Récupérer tables utiles
-        cur.execute("SELECT * FROM materiel WHERE lot = ?", (lot,))
-        materiel_rows = cur.fetchall()
-        # fallback: si aucun materiel pour ce lot, charger tout pour diagnostic
-        if not materiel_rows:
-            print(f"build_tableau_source: aucun matériel trouvé pour lot='{lot}', fallback sur tous les matériels")
+        if str(lot).strip().upper() == "GLOBAL":
             cur.execute("SELECT * FROM materiel")
             materiel_rows = cur.fetchall()
+        else:
+            cur.execute("SELECT * FROM materiel WHERE lot = ?", (lot,))
+            materiel_rows = cur.fetchall()
+            # fallback: si aucun materiel pour ce lot, charger tout pour diagnostic
+            if not materiel_rows:
+                print(f"build_tableau_source: aucun matériel trouvé pour lot='{lot}', fallback sur tous les matériels")
+                cur.execute("SELECT * FROM materiel")
+                materiel_rows = cur.fetchall()
 
         cur.execute("SELECT * FROM conditionnement")
         cond_rows = cur.fetchall()
@@ -243,8 +268,9 @@ def build_tableau_source(
             cap = r[3] if r[3] is not None else 0
             cam_by_type.setdefault(typ, []).append({'nom': nom, 'capacite': cap})
 
-        # Construire dict materiel
+        # Construire dict materiel (par famille et par couple famille+lot)
         materiel_dict = {}
+        materiel_dict_by_lot = {}
         # helper to normalize strings (remove accents, lower)
         def _norm(s):
             import unicodedata
@@ -268,6 +294,7 @@ def build_tableau_source(
                 'cond2': r[9], 'cond2_qty': r[10],
                 'cond3': r[11], 'cond3_qty': r[12],
             }
+            materiel_dict_by_lot[(_norm(r[2]), key)] = materiel_dict[key]
 
         # Helper: picker camion (portage of OptimiserRemplissage)
         def pick_camion(nb_palettes, type_cam):
@@ -304,16 +331,25 @@ def build_tableau_source(
         print(f"build_tableau_source: materiel_rows={len(materiel_rows)}, cond_rows={len(cond_rows)}, cam_rows={len(cam_rows)}")
         print(f"donnees_grid shape={donnees_grid.shape}")
 
+        has_lot_col = len(donnees_grid) > 1 and len(donnees_grid.columns) > 2 and str(donnees_grid.iloc[1, 2]).strip().lower() == "lot"
+        lot_col_idx = 2 if has_lot_col else None
+        cat_col_idx = 1
+        zone_start_idx = 5 if has_lot_col else 4
+
         # VBA: j 5 To lastColumnDonnees - 2 (skip "Exclus" + "Commentaires")
         last_col = max(0, len(donnees_grid.columns) - 2)
-        for col_idx in range(4, last_col):
+        for col_idx in range(zone_start_idx, last_col):
             etage = donnees_grid.iloc[0, col_idx] if col_idx < len(donnees_grid.columns) else ""
             zone = donnees_grid.iloc[1, col_idx] if col_idx < len(donnees_grid.columns) else ""
 
             for row_idx in range(3, len(donnees_grid)):
-                categorie = donnees_grid.iloc[row_idx, 1]
+                categorie = donnees_grid.iloc[row_idx, cat_col_idx]
                 if pd.isna(categorie) or str(categorie).strip() == "":
                     continue
+                lot_ligne = ""
+                if lot_col_idx is not None:
+                    lot_ligne = donnees_grid.iloc[row_idx, lot_col_idx]
+                    lot_ligne = "" if pd.isna(lot_ligne) else str(lot_ligne).strip()
                 # convert quantity robustly
                 raw = donnees_grid.iloc[row_idx, col_idx]
                 try:
@@ -327,9 +363,16 @@ def build_tableau_source(
                     continue
 
                 key = _norm(categorie)
-                mat = materiel_dict.get(key)
+                mat = None
+                if lot_ligne:
+                    mat = materiel_dict_by_lot.get((_norm(lot_ligne), key))
+                if not mat and lot and str(lot).strip().upper() != "GLOBAL":
+                    mat = materiel_dict_by_lot.get((_norm(lot), key))
+                if not mat:
+                    mat = materiel_dict.get(key)
                 if not mat:
                     continue
+                lot_reel = lot_ligne if lot_ligne else mat.get("lot", lot)
 
                 # choisir conditionnement et sa quantite par UM (meme paire que VBA)
                 cond_name = 'Palette'
@@ -375,7 +418,7 @@ def build_tableau_source(
                 new_row = [
                     etage,
                     zone,
-                    lot,
+                    lot_reel,
                     mat.get('phase'),
                     mat.get('nom'),
                     mat.get('unite'),
@@ -398,13 +441,14 @@ def build_tableau_source(
         print(f"build_tableau_source: created {len(rows)} material rows before CCC stocks")
         # Parcourir toutes les combinaisons d'etage/zone présentes
         if not df_rows.empty:
-            zones = df_rows[['Etage', 'Zone']].drop_duplicates()
+            zones = df_rows[['Etage', 'Zone', 'Lot']].drop_duplicates()
             for _, z in zones.iterrows():
-                et, zo = z['Etage'], z['Zone']
+                et, zo, lt = z['Etage'], z['Zone'], z['Lot']
                 for phase in ['Production', 'Terminaux']:
                     mask = (
                         (df_rows['Etage'] == et)
                         & (df_rows['Zone'] == zo)
+                        & (df_rows['Lot'] == lt)
                         & (df_rows["Utilisation d'une CCC"] == 'Oui')
                         & (df_rows['Phase de traveaux'] == phase)
                     )
@@ -429,7 +473,7 @@ def build_tableau_source(
                     stock_row = [
                         et,
                         zo,
-                        lot,
+                        lt,
                         phase,
                         f"Stock CCC {phase}",
                         '',

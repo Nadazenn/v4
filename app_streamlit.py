@@ -144,11 +144,7 @@ if menu == "Paramétrage":
             st.success(f"Indice enregistré : {p['planning_indice']}")
             p["show_popup_planning"] = False
 
-    st.markdown("""
-    ℹ️ **Explication :**
-    - **Date début Production** = début des travaux techniques de base (réseaux, câblage, équipements centraux).
-    - **Date début Terminaux** = début de la pose des terminaux (prises, luminaires, capteurs, etc.), plus tard dans le chantier.
-    """)
+    st.caption("Production = début travaux techniques, Terminaux = pose terminaux plus tard.")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -167,6 +163,14 @@ if menu == "Paramétrage":
         _param_number_input("Durée moyenne Terminaux (jours)", "duree_termmoyen_paretage", 30, min_value=0, step=1, format="%d")
 
     # --- Planning détaillé ---
+    st.markdown("**Mode planning détaillé**")
+    p["planning_mode"] = st.radio(
+        "Choisissez votre mode de travail :",
+        ["Application", "Excel"],
+        index=0 if p.get("planning_mode", "Application") == "Application" else 1,
+        horizontal=True,
+    )
+
     if "output_table" in p:
         if st.button("Créer le planning détaillé"):
             etages_zones = p["output_table"]["Numéro étage (pas de lettres)"].tolist()
@@ -182,27 +186,70 @@ if menu == "Paramétrage":
 
     # --- Tableau Détails (modifiable) ---
     if "output_details_table" in p:
-        st.subheader("🗓️ Tableau Détails (modifiable)")
         df_base = p["output_details_table"]
 
-        gb = GridOptionsBuilder.from_dataframe(df_base)
-        gb.configure_pagination(enabled=True)
-        gb.configure_default_column(editable=True, wrapText=True, autoHeight=True)
-        grid_options = gb.build()
+        if p.get("planning_mode", "Application") == "Application":
+            st.markdown("**Tableau Détails (application)**")
+            gb = GridOptionsBuilder.from_dataframe(df_base)
+            gb.configure_pagination(enabled=True)
+            gb.configure_default_column(editable=True, wrapText=True, autoHeight=True)
+            grid_options = gb.build()
 
-        grid_response = AgGrid(
-            df_base,
-            gridOptions=grid_options,
-            data_return_mode='AS_INPUT',
-            update_mode=GridUpdateMode.NO_UPDATE,
-            fit_columns_on_grid_load=True,
-            allow_unsafe_jscode=True,
-            key="planning_grid"
-        )
+            grid_response = AgGrid(
+                df_base,
+                gridOptions=grid_options,
+                data_return_mode='AS_INPUT',
+                update_mode=GridUpdateMode.NO_UPDATE,
+                fit_columns_on_grid_load=True,
+                allow_unsafe_jscode=True,
+                key="planning_grid"
+            )
 
-        if st.button("💾 Enregistrer le planning"):
-            p["output_details_table"] = pd.DataFrame(grid_response["data"])
-            st.success("✅ Planning enregistré avec succès")
+            if st.button("💾 Enregistrer le planning"):
+                p["output_details_table"] = pd.DataFrame(grid_response["data"])
+                st.success("✅ Planning enregistré avec succès")
+        else:
+            st.markdown("**Tableau Détails (Excel)**")
+            st.caption("Téléchargez, modifiez dans Excel, puis ré-uploadez.")
+
+            excel_buffer = io.BytesIO()
+            df_base.to_excel(excel_buffer, index=False, sheet_name="Planning_Details")
+            excel_buffer.seek(0)
+            st.download_button(
+                "📥 Télécharger le planning détaillé (Excel)",
+                data=excel_buffer.getvalue(),
+                file_name="planning_detaille_modifiable.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+            uploaded_planning = st.file_uploader(
+                "📤 Uploader le planning détaillé modifié (Excel)",
+                type=["xlsx"],
+                key="planning_details_upload",
+            )
+            if uploaded_planning is not None:
+                try:
+                    df_uploaded = pd.read_excel(uploaded_planning, engine="openpyxl")
+                    required_cols = list(df_base.columns)
+                    missing = [c for c in required_cols if c not in df_uploaded.columns]
+                    if missing:
+                        st.error(
+                            "Le fichier uploadé ne contient pas les colonnes attendues : "
+                            + ", ".join(missing)
+                        )
+                    else:
+                        df_uploaded = df_uploaded[required_cols].copy()
+                        for date_col in ["Date début phase production", "Date début phase terminaux"]:
+                            if date_col in df_uploaded.columns:
+                                df_uploaded[date_col] = df_uploaded[date_col].map(_format_date_fr)
+                        p["output_details_table"] = df_uploaded
+                        df_base = p["output_details_table"]
+                        st.success("✅ Planning importé depuis Excel.")
+                except Exception as e:
+                    st.error(f"Erreur lors de l'import Excel : {e}")
+
+            st.markdown("**Aperçu planning rechargé**")
+            st.dataframe(df_base, use_container_width=True)
 
     # --- CCC ---
     # --- Activation CCC ---
@@ -432,7 +479,18 @@ elif menu == "Données":
             )
 
             if st.button("💾 Enregistrer le bordereau"):
-                st.session_state["bordereau_modifie"] = pd.DataFrame(grid_response["data"])
+                df_saved = pd.DataFrame(grid_response["data"])
+                if str(params.get("lot", "")).upper() == "GLOBAL" and "Catégorie Prédite" in df_saved.columns:
+                    try:
+                        df_lots = pd.read_sql_query("SELECT nom, lot FROM materiel", daba.conn)
+                        lot_map = {
+                            str(r["nom"]).strip().lower(): r["lot"]
+                            for _, r in df_lots.iterrows()
+                        }
+                        df_saved["Lot"] = df_saved["Catégorie Prédite"].astype(str).str.strip().str.lower().map(lot_map)
+                    except Exception:
+                        pass
+                st.session_state["bordereau_modifie"] = df_saved
                 st.success("Bordereau enregistré. Vous pouvez maintenant créer le fichier final.")
 
 
@@ -714,13 +772,15 @@ elif menu == "Dashboard":
         conn = sqlite3.connect("logistique.db")
         try:
             if str(lot_value).upper() == "GLOBAL":
-                df = pd.read_sql("SELECT nom FROM materiel", conn)
+                df = pd.read_sql("SELECT nom, lot FROM materiel", conn)
             else:
-                df = pd.read_sql("SELECT nom FROM materiel WHERE lot = ?", conn, params=(lot_value,))
+                df = pd.read_sql("SELECT nom, lot FROM materiel WHERE lot = ?", conn, params=(lot_value,))
         finally:
             conn.close()
         if "nom" in df.columns:
             df = df.rename(columns={"nom": "Nom"})
+        if "lot" in df.columns:
+            df = df.rename(columns={"lot": "Lot"})
         return df
 
     def _ensure_donnees_grid(bordereau_df, planning_df):
@@ -1024,11 +1084,19 @@ elif menu == "Dashboard":
         else:
             df_mat = pd.DataFrame(columns=["Matériel CCC", "Nombre de matériels CCC"])
 
-        # Materiel complet (depuis Tableau Source)
+        # Materiel complet (depuis Donnees)
         if donnees_grid is not None and {"2", "3"}.issubset(donnees_grid.columns):
+            qty_col = "3"
+            try:
+                # Si la colonne 3 est "Lot", la quantité se trouve en colonne 4
+                header_c3 = str(donnees_grid.iloc[1, 2]).strip().lower()
+                if header_c3 == "lot" and "4" in donnees_grid.columns:
+                    qty_col = "4"
+            except Exception:
+                qty_col = "3"
             df_mat_full = (
-                donnees_grid.loc[3:, ["2", "3"]]
-                .rename(columns={"2": "Matériel complet", "3": "Nombre total de matériels"})
+                donnees_grid.loc[3:, ["2", qty_col]]
+                .rename(columns={"2": "Matériel complet", qty_col: "Nombre total de matériels"})
             )
             df_mat_full["Matériel complet"] = df_mat_full["Matériel complet"].astype(str).str.strip()
             df_mat_full["Nombre total de matériels"] = pd.to_numeric(
@@ -1182,6 +1250,86 @@ elif menu == "Dashboard":
         cam_type = df_type[["Type de Camion", "Nombre de Camions.1"]].rename(columns={"Nombre de Camions.1": "Nombre de Camions"})
         return bg, cam_type
 
+    def _build_lot_share_df(df_source: pd.DataFrame, ccc_only: bool = False) -> pd.DataFrame:
+        col_lot = _find_col(df_source.columns, "Lot")
+        col_pal = _find_col(df_source.columns, "Nombre palettes equivalent total")
+        col_use = (
+            _find_col(df_source.columns, "Utilisation d'une CCC")
+            or _find_col(df_source.columns, "Utilisation d'un CCC")
+        )
+        col_nom = (
+            _find_col(df_source.columns, "Nom de l'element")
+            or _find_col(df_source.columns, "Nom de l'élément")
+            or _find_col(df_source.columns, "Nom de l'élement")
+        )
+        if not col_lot or not col_pal:
+            return pd.DataFrame(columns=["Lot", "Palettes", "Pourcentage"])
+
+        keep_cols = [col_lot, col_pal]
+        if col_use:
+            keep_cols.append(col_use)
+        dfp = df_source[keep_cols].copy()
+        if col_nom and col_nom in df_source.columns:
+            dfp[col_nom] = df_source[col_nom]
+            dfp = dfp[~dfp[col_nom].astype(str).str.lower().str.startswith("stock ccc")]
+
+        if ccc_only:
+            if not col_use:
+                return pd.DataFrame(columns=["Lot", "Palettes", "Pourcentage"])
+            dfp[col_use] = dfp[col_use].astype(str).str.strip().str.lower()
+            dfp = dfp[dfp[col_use].isin(["oui", "yes", "y", "1"])]
+
+        dfp[col_lot] = dfp[col_lot].astype(str).str.strip()
+        dfp[col_pal] = pd.to_numeric(dfp[col_pal], errors="coerce").fillna(0)
+        dfp = dfp[dfp[col_lot] != ""]
+        dfp = dfp.groupby(col_lot, as_index=False)[col_pal].sum()
+        dfp = dfp[dfp[col_pal] > 0]
+        if dfp.empty:
+            return pd.DataFrame(columns=["Lot", "Palettes", "Pourcentage"])
+
+        dfp = dfp.rename(columns={col_lot: "Lot", col_pal: "Palettes"})
+        total = float(dfp["Palettes"].sum())
+        dfp["Pourcentage"] = (dfp["Palettes"] / total * 100.0) if total > 0 else 0.0
+        return dfp.sort_values("Palettes", ascending=False).reset_index(drop=True)
+
+    def _plot_palettes_par_lot_pie(df_source: pd.DataFrame, key: str):
+        dfp = _build_lot_share_df(df_source, ccc_only=False)
+
+        if dfp.empty:
+            st.info("Aucune palette par lot à afficher.")
+            return dfp
+
+        fig = px.pie(
+            dfp,
+            names="Lot",
+            values="Palettes",
+            hole=0.45,
+            title="Pourcentage de palettes par lot",
+        )
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        fig.update_layout(margin=dict(l=10, r=10, t=45, b=10))
+        st.plotly_chart(fig, key=key, use_container_width=True)
+        return dfp
+
+    def _plot_ccc_par_lot_pie(df_source: pd.DataFrame, key: str):
+        dfc = _build_lot_share_df(df_source, ccc_only=True)
+
+        if dfc.empty:
+            st.info("Aucune palette CCC par lot à afficher.")
+            return dfc
+
+        fig = px.pie(
+            dfc,
+            names="Lot",
+            values="Palettes",
+            hole=0.45,
+            title="Pourcentage CCC par lot",
+        )
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        fig.update_layout(margin=dict(l=10, r=10, t=45, b=10))
+        st.plotly_chart(fig, key=key, use_container_width=True)
+        return dfc
+
     donnees_grid = _ensure_donnees_grid(st.session_state["bordereau_modifie"], planning)
     donnees_grid = _fix_df_columns(donnees_grid)
     src = _ensure_tableau_source(st.session_state["bordereau_modifie"], donnees_grid, params.get("lot", ""))
@@ -1189,10 +1337,33 @@ elif menu == "Dashboard":
     if "Utilisation d'un CCC" in src.columns and "Utilisation d'une CCC" not in src.columns:
         src["Utilisation d'une CCC"] = src["Utilisation d'un CCC"]
 
+    lots_selectionnes = []
+    donnees_grid_dashboard = donnees_grid
+    if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src.columns:
+        lots_disponibles = sorted(src["Lot"].dropna().astype(str).str.strip().unique().tolist())
+        lots_selectionnes = st.multiselect(
+            "Lots à visualiser",
+            options=lots_disponibles,
+            default=lots_disponibles,
+            key="dashboard_lots_filter",
+        )
+        if lots_selectionnes:
+            src = src[src["Lot"].astype(str).isin(lots_selectionnes)].copy()
+            try:
+                if "3" in donnees_grid.columns and str(donnees_grid.iloc[1, 2]).strip().lower() == "lot":
+                    entete = donnees_grid.iloc[:3, :].copy()
+                    data = donnees_grid.iloc[3:, :].copy()
+                    data = data[data["3"].astype(str).isin(lots_selectionnes)]
+                    donnees_grid_dashboard = pd.concat([entete, data], ignore_index=True)
+            except Exception:
+                donnees_grid_dashboard = donnees_grid
+
     param = _build_param_df(params)
     param = _fix_df_columns(param)
     materiel = _load_materiel_df(params.get("lot", ""))
-    bg, camions_type_base = _compute_bilan_graphique(src, planning, donnees_grid)
+    if lots_selectionnes and "Lot" in materiel.columns:
+        materiel = materiel[materiel["Lot"].astype(str).isin(lots_selectionnes)].copy()
+    bg, camions_type_base = _compute_bilan_graphique(src, planning, donnees_grid_dashboard)
     bg = _fix_df_columns(bg)
 
     if bg is None or bg.empty:
@@ -1718,6 +1889,19 @@ elif menu == "Dashboard":
                             f"{(total_palettes * 0.96):,.0f}".replace(",", " "),
                         )
 
+                    if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src_v1.columns:
+                        p1, p2 = st.columns(2)
+                        with p1:
+                            df_pal_lot_v1 = _plot_palettes_par_lot_pie(src_v1, key="pie_palettes_lot_v1")
+                        with p2:
+                            st.markdown("#### Détail palettes par lot")
+                            if df_pal_lot_v1 is not None and not df_pal_lot_v1.empty:
+                                dfl = df_pal_lot_v1.copy()
+                                dfl["Pourcentage"] = dfl["Pourcentage"].map(lambda v: f"{v:.1f}%")
+                                st.dataframe(dfl, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("Aucune donnée.")
+
                     c1, c2 = st.columns(2)
 
                     # -------- Palettes par famille (avant CCC) --------
@@ -1838,6 +2022,17 @@ elif menu == "Dashboard":
                                 qty_col = c
 
                         if mat_col and qty_col:
+                            if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src_v1.columns:
+                                df_ccc_lot_v1 = _plot_ccc_par_lot_pie(src_v1, key="pie_ccc_lot_v1")
+                                st.markdown("#### Détail CCC par lot")
+                                if df_ccc_lot_v1 is not None and not df_ccc_lot_v1.empty:
+                                    dfc = df_ccc_lot_v1.copy()
+                                    dfc["Palettes"] = pd.to_numeric(dfc["Palettes"], errors="coerce").fillna(0).astype(int)
+                                    dfc["Pourcentage"] = dfc["Pourcentage"].map(lambda v: f"{v:.1f}%")
+                                    st.dataframe(dfc, use_container_width=True, hide_index=True)
+                                else:
+                                    st.info("Aucune donnée CCC.")
+
                             df_v1_mat = (
                                 bg[[mat_col, qty_col]]
                                 .dropna(subset=[mat_col])
@@ -2144,6 +2339,19 @@ elif menu == "Dashboard":
                         "Surface totale occupée (m²)",
                         f"{surface_totale_v0:,.0f}".replace(",", " "),
                     )
+
+                if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src.columns:
+                    p1_v0, p2_v0 = st.columns(2)
+                    with p1_v0:
+                        df_pal_lot_v0 = _plot_palettes_par_lot_pie(src, key="pie_palettes_lot_v0")
+                    with p2_v0:
+                        st.markdown("#### Détail palettes par lot")
+                        if df_pal_lot_v0 is not None and not df_pal_lot_v0.empty:
+                            dfl0 = df_pal_lot_v0.copy()
+                            dfl0["Pourcentage"] = dfl0["Pourcentage"].map(lambda v: f"{v:.1f}%")
+                            st.dataframe(dfl0, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("Aucune donnée.")
 
                 # Deux graphiques côte à côte
                 c1, c2 = st.columns(2)

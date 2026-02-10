@@ -19,7 +19,10 @@ def nom_table (table):
 def afficher_donnees(table, model_choice):
     table = nom_table (table)
     if table == "materiel" :
-        query = f"SELECT * FROM {table} WHERE lot = '{model_choice}' "
+        if str(model_choice).strip().upper() == "GLOBAL":
+            query = f"SELECT * FROM {table}"
+        else:
+            query = f"SELECT * FROM {table} WHERE lot = '{model_choice}' "
     else :
         query = f"SELECT * FROM {table}"
     df = pd.read_sql(query, conn)
@@ -56,7 +59,7 @@ def enregistrer_modifications(table, df_modifie, lot_choice=None):
 
     # Supprimer les anciennes lignes qui existent déjà dans la base
     if table == "materiel":
-        if lot_choice:
+        if lot_choice and str(lot_choice).strip().upper() != "GLOBAL":
             if "lot" in df_modifie.columns:
                 df_modifie["lot"] = df_modifie["lot"].fillna(lot_choice)
             else:
@@ -97,16 +100,53 @@ def ajouter_supportage(materiels_df, model_choice):
     :return: DataFrame mis à jour avec les entrées "Supportage".
     """
     
-    # Récupérer les matériels ayant 'Oui' dans la colonne 'supportage' et correspondant au lot choisi
-    query = f"SELECT nom FROM materiel WHERE supportage = 'Oui' AND lot = '{model_choice}'"
-    materiels_supportage = pd.read_sql_query(query, conn)['nom'].tolist()
+    def _norm(s):
+        return "" if s is None else str(s).strip().lower()
 
-    # Calculer la quantité totale de supportage (somme de 50% des quantités des matériels concernés)
-    quantite_supportage_totale = materiels_df[materiels_df['Catégorie Prédite'].isin(materiels_supportage)]['Quantité'].sum() * 0.03
+    df = materiels_df.copy()
+    has_lot = "Lot" in df.columns
 
-    # Ajouter UNE SEULE ligne "Supportage" si la quantité est positive
-    if quantite_supportage_totale > 0:
-        supportage_row = pd.DataFrame([{'Catégorie Prédite': 'Supportage', 'Quantité': quantite_supportage_totale}])
-        materiels_df = pd.concat([materiels_df, supportage_row], ignore_index=True)
+    supportage_df = pd.read_sql_query(
+        "SELECT nom, lot FROM materiel WHERE supportage = 'Oui'",
+        conn
+    )
+    supportage_df["nom_norm"] = supportage_df["nom"].map(_norm)
+    supportage_df["lot_norm"] = supportage_df["lot"].map(_norm)
 
-    return materiels_df
+    cat_col = "Catégorie Prédite"
+    qty_col = "Quantité"
+    if cat_col not in df.columns or qty_col not in df.columns:
+        return df
+
+    df["_cat_norm"] = df[cat_col].map(_norm)
+    df[qty_col] = pd.to_numeric(df[qty_col], errors="coerce").fillna(0)
+
+    rows_to_add = []
+
+    if has_lot:
+        df["_lot_norm"] = df["Lot"].map(_norm)
+        for lot_norm in sorted(df["_lot_norm"].dropna().unique().tolist()):
+            noms_lot = set(
+                supportage_df.loc[supportage_df["lot_norm"] == lot_norm, "nom_norm"].dropna().tolist()
+            )
+            if not noms_lot:
+                continue
+            q = df.loc[(df["_lot_norm"] == lot_norm) & (df["_cat_norm"].isin(noms_lot)), qty_col].sum() * 0.03
+            if q > 0:
+                lot_value = df.loc[df["_lot_norm"] == lot_norm, "Lot"].iloc[0]
+                rows_to_add.append({"Lot": lot_value, cat_col: "Supportage", qty_col: q})
+        if rows_to_add:
+            df = pd.concat([df, pd.DataFrame(rows_to_add)], ignore_index=True)
+    else:
+        model_norm = _norm(model_choice)
+        if model_norm == "global":
+            noms = set(supportage_df["nom_norm"].dropna().tolist())
+        else:
+            noms = set(
+                supportage_df.loc[supportage_df["lot_norm"] == model_norm, "nom_norm"].dropna().tolist()
+            )
+        q = df.loc[df["_cat_norm"].isin(noms), qty_col].sum() * 0.03
+        if q > 0:
+            df = pd.concat([df, pd.DataFrame([{cat_col: "Supportage", qty_col: q}])], ignore_index=True)
+
+    return df.drop(columns=[c for c in ["_cat_norm", "_lot_norm"] if c in df.columns])

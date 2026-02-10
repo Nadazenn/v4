@@ -147,9 +147,25 @@ def process_file(model_choice, file):
         materiels_df["Catégorie Prédite"] = cats
         materiels_df["Taux de Confiance"] = max_confidences
 
+        # Ajouter la colonne Lot pour toutes les lignes (obligatoire pour le mode GLOBAL)
+        if str(model_choice).upper() == "GLOBAL":
+            conn = sqlite3.connect("logistique.db")
+            try:
+                df_lots = pd.read_sql_query("SELECT nom, lot FROM materiel", conn)
+            finally:
+                conn.close()
+
+            def _norm(s):
+                return "" if s is None else str(s).strip().lower()
+
+            lot_map = { _norm(r["nom"]): r["lot"] for _, r in df_lots.iterrows() }
+            materiels_df["Lot"] = materiels_df["Catégorie Prédite"].map(lambda v: lot_map.get(_norm(v), ""))
+        else:
+            materiels_df["Lot"] = model_choice
+
         # Colonnes utiles
         output_df = materiels_df[
-            ["Désignation", "Catégorie Prédite", "Taux de Confiance", "Quantité", "Prix unitaire"]
+            ["Désignation", "Catégorie Prédite", "Lot", "Taux de Confiance", "Quantité", "Prix unitaire"]
         ].sort_values(by="Taux de Confiance", ascending=True)
         
         # Sauvegarde Excel
