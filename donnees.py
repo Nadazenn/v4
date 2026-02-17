@@ -106,7 +106,8 @@ def preprocess_excel(file):
 
 # Étape 1 : Générer le fichier temporaire
 def process_file(model_choice, file):
-    model_name = f"{model_choice}.pkl"
+    model_choice_internal = "GLOBAL" if str(model_choice).upper() in {"GLOBAL", "TCE"} else model_choice
+    model_name = f"{model_choice_internal}.pkl"
     try:
         # Charger le modèle
         global model
@@ -148,7 +149,7 @@ def process_file(model_choice, file):
         materiels_df["Taux de Confiance"] = max_confidences
 
         # Ajouter la colonne Lot pour toutes les lignes (obligatoire pour le mode GLOBAL)
-        if str(model_choice).upper() == "GLOBAL":
+        if str(model_choice_internal).upper() == "GLOBAL":
             conn = sqlite3.connect("logistique.db")
             try:
                 df_lots = pd.read_sql_query("SELECT nom, lot FROM materiel", conn)
@@ -161,7 +162,7 @@ def process_file(model_choice, file):
             lot_map = { _norm(r["nom"]): r["lot"] for _, r in df_lots.iterrows() }
             materiels_df["Lot"] = materiels_df["Catégorie Prédite"].map(lambda v: lot_map.get(_norm(v), ""))
         else:
-            materiels_df["Lot"] = model_choice
+            materiels_df["Lot"] = model_choice_internal
 
         # Colonnes utiles
         output_df = materiels_df[
@@ -198,6 +199,7 @@ def process_file(model_choice, file):
 # Étape 2 : Valider et créer le fichier final
 def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stockage, frais_palette, frais_livraison, output_table, output_details_table, choix_camions, choix_conditionnement, entreprise_choice,planning_indice,use_ccc):
     try:
+        model_choice_internal = "GLOBAL" if str(model_choice).upper() in {"GLOBAL", "TCE"} else model_choice
 
 
         # Lire les données du fichier Excel source
@@ -206,7 +208,7 @@ def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stock
         # Regrouper par catégorie
         grouped_df = materiels_df.groupby('Catégorie Prédite')['Quantité'].sum().reset_index()
 
-        grouped_df = daba.ajouter_supportage(grouped_df, model_choice)
+        grouped_df = daba.ajouter_supportage(grouped_df, model_choice_internal)
 
         # Définir le chemin du fichier original 'outil.xlsm'
         original_file_path  = os.path.join("templates", 'outil.xlsm')
@@ -317,7 +319,7 @@ def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stock
 
         ws = wb['Paramétrage']
 
-        ws["B1"] = model_choice
+        ws["B1"] = "TCE" if str(model_choice_internal).upper() == "GLOBAL" else model_choice_internal
         ws["B2"] = nombre_etages
         ws["B4"] = duree_stockage
         ws["B5"] = tarif_stockage
@@ -354,7 +356,10 @@ def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stock
         cursor = conn.cursor()
 
         # Exécution de la requête pour récupérer toutes les données de la table matériel
-        cursor.execute("SELECT * FROM materiel WHERE lot = ?", (model_choice,))
+        if str(model_choice_internal).upper() == "GLOBAL":
+            cursor.execute("SELECT * FROM materiel")
+        else:
+            cursor.execute("SELECT * FROM materiel WHERE lot = ?", (model_choice_internal,))
         rows = cursor.fetchall()
 
         # Supprimer la première colonne (clé primaire) de chaque ligne
@@ -486,9 +491,10 @@ def finalize_file(file, model_choice, nombre_etages, duree_stockage, tarif_stock
         alignment2 = Alignment(horizontal="center", vertical="top", wrap_text=True)
 
         # Mettre le texte dans deux cellules différentes
-        ws['B1'] = f"Etude Logistique - Lot {model_choice}"  # Première ligne
-        ws['J1'] = f"Etude Logistique - Lot {model_choice}"
-        ws['R1'] = f"Etude Logistique - Lot {model_choice}"
+        lot_label = "TCE" if str(model_choice_internal).upper() == "GLOBAL" else model_choice_internal
+        ws['B1'] = f"Etude Logistique - Lot {lot_label}"  # Première ligne
+        ws['J1'] = f"Etude Logistique - Lot {lot_label}"
+        ws['R1'] = f"Etude Logistique - Lot {lot_label}"
         ws['B3'] = entreprise_choice  # Deuxième ligne
         ws['J3'] = entreprise_choice
         ws['R3'] = entreprise_choice  

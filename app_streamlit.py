@@ -40,6 +40,35 @@ Les fonctionnalités sont en cours de développement et peuvent évoluer.
 """)
 
 
+def _to_internal_lot(value: str) -> str:
+    v = "" if value is None else str(value).strip()
+    return "GLOBAL" if v.upper() in {"GLOBAL", "TCE"} else v
+
+
+def _to_display_lot(value: str) -> str:
+    v = "" if value is None else str(value).strip()
+    return "TCE" if v.upper() == "GLOBAL" else v
+
+
+def _enrich_lot_from_db(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    if "Catégorie Prédite" not in df.columns:
+        return df
+    try:
+        df_lots = pd.read_sql_query("SELECT nom, lot FROM materiel", daba.conn)
+        lot_map = {str(r["nom"]).strip().lower(): r["lot"] for _, r in df_lots.iterrows()}
+        out = df.copy()
+        mapped = out["Catégorie Prédite"].astype(str).str.strip().str.lower().map(lot_map)
+        if "Lot" in out.columns:
+            out["Lot"] = out["Lot"].where(out["Lot"].astype(str).str.strip() != "", mapped)
+        else:
+            out["Lot"] = mapped
+        return out
+    except Exception:
+        return df
+
+
 def _format_date_fr(value):
     if isinstance(value, (datetime, date)):
         return value.strftime("%d/%m/%Y")
@@ -57,7 +86,7 @@ menu = st.sidebar.radio(
 if menu == "Paramétrage":
     st.header("⚙️ Paramétrage")
 
-    # --- Persistance de la page entière ---
+    # Persistance de la page entière
     if "parametrage_page" not in st.session_state:
         st.session_state["parametrage_page"] = {}
     p = st.session_state["parametrage_page"]
@@ -72,18 +101,19 @@ if menu == "Paramétrage":
         p[key] = val
         return val
 
-    # --- Explication générale ---
+    # Explication générale
 
-    # --- Sélections principales ---
+    # Sélections principales
     entreprises = [f.replace("_logo.png", "") for f in os.listdir("images/logos_entreprises") if f.endswith(".png")]
     if "Choix entreprise" not in entreprises:
         entreprises.insert(0, "Choix entreprise")
     # Modèles disponibles
     models = [m.replace(".pkl", "") for m in os.listdir("models") if m.endswith(".pkl")]
 
-    # Ajouter le modèle global
-    if "GLOBAL" not in models:
-        models.insert(0, "GLOBAL")
+    # Afficher TCE à la place de GLOBAL dans l'UI
+    models = ["TCE" if m == "GLOBAL" else m for m in models]
+    if "TCE" not in models:
+        models.insert(0, "TCE")
     if "Choix lot" not in models:
         models.insert(0, "Choix lot")
 
@@ -96,21 +126,24 @@ if menu == "Paramétrage":
     # Modèles disponibles
     models = [m.replace(".pkl", "") for m in os.listdir("models") if m.endswith(".pkl")]
 
-    # Ajouter le modèle global
-    if "GLOBAL" not in models:
-        models.insert(0, "GLOBAL")
+    # Afficher TCE à la place de GLOBAL dans l'UI
+    models = ["TCE" if m == "GLOBAL" else m for m in models]
+    if "TCE" not in models:
+        models.insert(0, "TCE")
     if "Choix lot" not in models:
         models.insert(0, "Choix lot")
 
+    current_model_display = _to_display_lot(p.get("model_choice"))
     p["model_choice"] = st.selectbox(
-        "Sélectionnez le modèle (GLOBAL ou spécifique)",
+        "Sélectionnez le modèle (TCE ou spécifique)",
         models,
-        index=models.index(p.get("model_choice")) if "model_choice" in p and p["model_choice"] in models else 0,
+        index=models.index(current_model_display) if current_model_display in models else 0,
     )
+    p["model_choice"] = _to_internal_lot(p["model_choice"])
 
 
 
-    # --- Caractéristiques du bâtiment ---
+    # Caractéristiques du bâtiment
     st.subheader("Caractéristiques du bâtiment")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -120,7 +153,7 @@ if menu == "Paramétrage":
     with col3:
         _param_number_input("Numéro étage inférieur", "numero_etage_inf", 0, step=1, format="%d")
 
-    # --- Étages / Zones ---
+    # Étages / Zones
     st.subheader("Étages / Zones")
     if st.button("Valider Étages / Zones"):
         df1 = pa.generate_table(p["nombre_etages"], p["zones_par_etage_defaut"], p["numero_etage_inf"])
@@ -130,7 +163,7 @@ if menu == "Paramétrage":
     if "output_table" in p:
         st.dataframe(p["output_table"], use_container_width=True)
 
-    # --- Planning ---
+    # Planning
     st.subheader("Planning")
     if st.button("➕ Insérer un indice de planning"):
         p["show_popup_planning"] = True
@@ -162,7 +195,7 @@ if menu == "Paramétrage":
     with col3:
         _param_number_input("Durée moyenne Terminaux (jours)", "duree_termmoyen_paretage", 30, min_value=0, step=1, format="%d")
 
-    # --- Planning détaillé ---
+    # Planning détaillé
     st.markdown("**Mode planning détaillé**")
     p["planning_mode"] = st.radio(
         "Choisissez votre mode de travail :",
@@ -184,7 +217,7 @@ if menu == "Paramétrage":
             p["output_details_table"] = df2
             st.success("✅ Planning généré")
 
-    # --- Tableau Détails (modifiable) ---
+    # Tableau Détails (modifiable)
     if "output_details_table" in p:
         df_base = p["output_details_table"]
 
@@ -251,8 +284,8 @@ if menu == "Paramétrage":
             st.markdown("**Aperçu planning rechargé**")
             st.dataframe(df_base, use_container_width=True)
 
-    # --- CCC ---
-    # --- Activation CCC ---
+    # CCC
+    # Activation CCC
     st.subheader("Utilisation de la CCC")
     use_ccc = st.radio(
         "Souhaitez-vous utiliser une CCC ?",
@@ -282,7 +315,7 @@ if menu == "Paramétrage":
     st.image("images/conditionnements.png", caption="Conditionnements disponibles")
     p["choix_conditionnement"] = st.multiselect("Sélectionner les conditionnements possibles", daba.liste_conditionnement, default=p.get("choix_conditionnement", daba.liste_conditionnement))
 
-    # --- Validation finale ---
+    # Validation finale
     if st.button("✅ Valider le paramétrage"):
 
         df_final = p["output_details_table"]
@@ -396,14 +429,10 @@ elif menu == "Données":
     
     if mode == "Travailler directement dans l'application":
 
-        # ------------------------------
         # 📂 Upload du fichier Excel source
-        # ------------------------------
         uploaded_file = st.file_uploader("📂 Déposez le Bordereau Excel", type=["xlsx"])
 
-        # ------------------------------
         # 🚀 Création du Bordereau classé
-        # ------------------------------
         if st.button("Créer le Bordereau classé") and uploaded_file is not None:
             message, temp_path = do.process_file(params["lot"], uploaded_file)
 
@@ -427,9 +456,7 @@ elif menu == "Données":
             else:
                 st.error("Le bordereau n'a pas pu être généré. Corrige le fichier source puis réessaie.")
 
-        # ------------------------------
         # 📝 Tableau modifiable (AgGrid)
-        # ------------------------------
         if "bordereau_modifie" in st.session_state:
             st.subheader("📑 Bordereau classé (modifiable)")
 
@@ -446,7 +473,7 @@ elif menu == "Données":
             if "Catégorie Prédite" in df_base.columns:
                 lot_actuel = params["lot"]
                 try:
-                    if lot_actuel.upper() == "GLOBAL":
+                    if _to_internal_lot(lot_actuel).upper() == "GLOBAL":
                         query = "SELECT DISTINCT nom FROM materiel"
                         df_cat = pd.read_sql_query(query, daba.conn)
                     else:
@@ -480,7 +507,7 @@ elif menu == "Données":
 
             if st.button("💾 Enregistrer le bordereau"):
                 df_saved = pd.DataFrame(grid_response["data"])
-                if str(params.get("lot", "")).upper() == "GLOBAL" and "Catégorie Prédite" in df_saved.columns:
+                if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL" and "Catégorie Prédite" in df_saved.columns:
                     try:
                         df_lots = pd.read_sql_query("SELECT nom, lot FROM materiel", daba.conn)
                         lot_map = {
@@ -543,6 +570,9 @@ elif menu == "Pilotage Excel":
         st.warning("Veuillez d'abord completer l'onglet Donnees.")
         st.stop()
 
+    if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL":
+        st.session_state["bordereau_modifie"] = _enrich_lot_from_db(st.session_state["bordereau_modifie"])
+
     planning = params.get("param_details")
     if planning is None or planning.empty:
         st.error("Planning detaille manquant ou vide.")
@@ -581,7 +611,7 @@ elif menu == "Pilotage Excel":
     if "df_source_modif" not in st.session_state:
         st.session_state["df_source_modif"] = None
 
-    # --- Bouton creer tableau source ---
+    # Bouton creer tableau source
     if st.button("Creer Tableau Source", key="create_source"):
         try:
             st.session_state["df_source"] = pex.build_tableau_source(
@@ -593,7 +623,7 @@ elif menu == "Pilotage Excel":
         except Exception as e:
             st.error(f"Erreur creation Tableau Source : {e}")
 
-    # --- Bouton afficher tableau uniquement si df_source existe ---
+    # Bouton afficher tableau uniquement si df_source existe
     if st.session_state["df_source"] is not None or st.session_state["df_source_modif"] is not None:
         df_source = (
             st.session_state["df_source_modif"]
@@ -771,7 +801,7 @@ elif menu == "Dashboard":
         import sqlite3
         conn = sqlite3.connect("logistique.db")
         try:
-            if str(lot_value).upper() == "GLOBAL":
+            if _to_internal_lot(lot_value).upper() == "GLOBAL":
                 df = pd.read_sql("SELECT nom, lot FROM materiel", conn)
             else:
                 df = pd.read_sql("SELECT nom, lot FROM materiel WHERE lot = ?", conn, params=(lot_value,))
@@ -1330,6 +1360,9 @@ elif menu == "Dashboard":
         st.plotly_chart(fig, key=key, use_container_width=True)
         return dfc
 
+    if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL":
+        st.session_state["bordereau_modifie"] = _enrich_lot_from_db(st.session_state["bordereau_modifie"])
+
     donnees_grid = _ensure_donnees_grid(st.session_state["bordereau_modifie"], planning)
     donnees_grid = _fix_df_columns(donnees_grid)
     src = _ensure_tableau_source(st.session_state["bordereau_modifie"], donnees_grid, params.get("lot", ""))
@@ -1339,7 +1372,7 @@ elif menu == "Dashboard":
 
     lots_selectionnes = []
     donnees_grid_dashboard = donnees_grid
-    if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src.columns:
+    if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src.columns:
         lots_disponibles = sorted(src["Lot"].dropna().astype(str).str.strip().unique().tolist())
         lots_selectionnes = st.multiselect(
             "Lots à visualiser",
@@ -1684,7 +1717,7 @@ elif menu == "Dashboard":
     rempl_moyen_ccc = metrics_v1["rempl_moyen"]
     camions_zone_ccc = metrics_v1["camions_zone"].rename(columns={"Camions": "Total CCC"}) if not metrics_v1["camions_zone"].empty else pd.DataFrame(columns=["Étage - Zone", "Total CCC"])
 
-    # ---------- Hypothèses générales ----------
+    # Hypothèses générales
     lot_col = param.columns[1]  # même logique que ta macro
     try:
         nb_etages = param.loc[param["Lot"] == "Nombre étage :", lot_col].iloc[0]
@@ -1732,7 +1765,7 @@ elif menu == "Dashboard":
             except Exception:
                 src_v1 = pd.DataFrame()
 
-            # ---------- 3 onglets internes : Hypothèses / Palettes / Camions ----------
+            # 3 onglets internes : Hypothèses / Palettes / Camions
             ong_hyp_v1, ong_pal_v1, ong_cam_v1 = st.tabs(
                 ["📘 Hypothèses", "📦 Palettes", "🚚 Camions"]
             )
@@ -1781,7 +1814,7 @@ elif menu == "Dashboard":
 
                 h3, h4 = st.columns(2)
                 with h3:
-                    st.markdown("#### 📄 Hypothèses de l’étude")
+                    st.markdown("#### 📄 Hypothèses de l'étude")
                     st.markdown("- regroupement du matériel en grandes catégories")
                     st.markdown("- conversion des conditionnements en équivalent palette")
                     st.markdown("- 2 phases de travaux par étage")
@@ -1889,7 +1922,7 @@ elif menu == "Dashboard":
                             f"{(total_palettes * 0.96):,.0f}".replace(",", " "),
                         )
 
-                    if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src_v1.columns:
+                    if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src_v1.columns:
                         p1, p2 = st.columns(2)
                         with p1:
                             df_pal_lot_v1 = _plot_palettes_par_lot_pie(src_v1, key="pie_palettes_lot_v1")
@@ -1904,55 +1937,60 @@ elif menu == "Dashboard":
 
                     c1, c2 = st.columns(2)
 
-                    # -------- Palettes par famille (avant CCC) --------
+                    # Palettes par famille (avant CCC)
                     with c1:
                         st.markdown("#### Palettes par famille")
                         col_fam = (
                             _find_col(src_v1.columns, "Nom de l'element")
-                            or _find_col(src_v1.columns, "Nom de l'élément")
-                            or _find_col(src_v1.columns, "Nom de l'élement")
+                            or _find_col(src_v1.columns, "Nom de l'element")
+                            or _find_col(src_v1.columns, "Nom de l'element")
                         )
                         col_pal_eq = _find_col(src_v1.columns, "Nombre palettes equivalent total")
                         if col_fam and col_pal_eq:
-                            df_fam_pal = src_v1[[col_fam, col_pal_eq]].copy()
-                            df_fam_pal = df_fam_pal.dropna(subset=[col_fam])
-                            df_fam_pal = df_fam_pal[
-                                ~df_fam_pal[col_fam].astype(str).str.lower().str.startswith("stock ccc")
+                            df_fam_ref = pd.DataFrame({
+                                "Famille": src_v1[col_fam].dropna().astype(str).str.strip().unique()
+                            })
+                            df_fam_ref = df_fam_ref[df_fam_ref["Famille"] != ""]
+                            df_fam_ref = df_fam_ref[
+                                ~df_fam_ref["Famille"].str.lower().str.startswith("stock ccc")
                             ]
-                            df_fam_pal[col_pal_eq] = pd.to_numeric(
-                                df_fam_pal[col_pal_eq], errors="coerce"
-                            ).fillna(0)
+
+                            df_fam_pal = src_v1[[col_fam, col_pal_eq]].copy()
+                            df_fam_pal[col_fam] = df_fam_pal[col_fam].astype(str).str.strip()
+                            df_fam_pal[col_pal_eq] = pd.to_numeric(df_fam_pal[col_pal_eq], errors="coerce").fillna(0)
                             df_fam_pal = (
                                 df_fam_pal.groupby(col_fam, as_index=False)[col_pal_eq]
                                 .sum()
-                                .sort_values(col_pal_eq, ascending=False)
+                                .rename(columns={col_fam: "Famille", col_pal_eq: "Palettes"})
                             )
+
+                            df_fam_pal = (
+                                df_fam_ref.merge(df_fam_pal, on="Famille", how="left")
+                                .fillna({"Palettes": 0})
+                                .sort_values("Palettes", ascending=False)
+                            )
+
                             fig_fam_pal = px.bar(
                                 df_fam_pal,
-                                x=col_pal_eq,
-                                y=col_fam,
+                                x="Palettes",
+                                y="Famille",
                                 orientation="h",
-                                color=col_fam,
-                                color_discrete_sequence=[
-                                    "#F4A261",
-                                    "#2A9D8F",
-                                    "#E76F51",
-                                    "#264653",
-                                    "#8AB17D",
-                                    "#F1C453",
-                                    "#6D597A",
-                                ],
+                                color="Palettes",
+                                color_continuous_scale=["#EAF4F4", "#2A9D8F", "#1D3557"],
+                                text="Palettes",
                             )
+                            fig_fam_pal.update_traces(texttemplate="%{x:.0f}", textposition="outside")
                             fig_fam_pal.update_layout(
-                                showlegend=False,
                                 yaxis={"categoryorder": "total ascending"},
                                 margin=dict(l=10, r=10, t=20, b=10),
+                                coloraxis_showscale=False,
+                                height=max(320, min(1400, 34 * len(df_fam_pal))),
                             )
                             st.plotly_chart(fig_fam_pal, key="palettes_famille_v1", use_container_width=True)
                         else:
                             st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
-                    # -------- Flux palettes (identique V0) --------
+                    # Flux palettes (identique V0)
                     with c2:
                         st.markdown("#### Flux mensuel de palettes")
 
@@ -2008,7 +2046,7 @@ elif menu == "Dashboard":
 
                     c3, c4 = st.columns(2)
 
-                    # -------- Matériaux stockés en CCC --------
+                    # Matériaux stockés en CCC
                     with c3:
                         st.markdown("#### Matériaux stockés en CCC")
 
@@ -2022,7 +2060,7 @@ elif menu == "Dashboard":
                                 qty_col = c
 
                         if mat_col and qty_col:
-                            if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src_v1.columns:
+                            if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src_v1.columns:
                                 df_ccc_lot_v1 = _plot_ccc_par_lot_pie(src_v1, key="pie_ccc_lot_v1")
                                 st.markdown("#### Détail CCC par lot")
                                 if df_ccc_lot_v1 is not None and not df_ccc_lot_v1.empty:
@@ -2069,7 +2107,7 @@ elif menu == "Dashboard":
 
                     c1, c2 = st.columns(2)
 
-                    # -------- Camions par zone --------
+                    # Camions par zone
                     with c1:
                         st.markdown("#### Camions par étage")
                         if not camions_zone_ccc.empty:
@@ -2079,7 +2117,7 @@ elif menu == "Dashboard":
                         else:
                             st.info("Colonnes camions CCC manquantes")
 
-                        # -------- Flux camions CCC --------
+                        # Flux camions CCC
                     with c2:
                         st.markdown("#### Flux mensuel de camions")
 
@@ -2147,7 +2185,7 @@ elif menu == "Dashboard":
                     
 
                     c3, c4 = st.columns(2)
-                    # -------- Remplissage CCC --------
+                    # Remplissage CCC
                     with c3:
                         st.markdown("#### Remplissage par étage")
                         if not rempl_zone_ccc.empty:
@@ -2230,7 +2268,7 @@ elif menu == "Dashboard":
 
                 h1, h2 = st.columns(2)
                 with h1:
-                    # ---------- Document de source ----------
+                    # Document de source
                     st.markdown("### 📄 Document de source")
 
                     # Pré-remplissage DPGF + Indice à partir de dpgf_date et planning_indice
@@ -2253,7 +2291,7 @@ elif menu == "Dashboard":
                     st.file_uploader("Veuillez joindre le fichier PIC", key="pic_v0")
 
                 with h2:
-                    # ---------- Hypothèse planning ----------
+                    # Hypothèse planning
                     st.markdown("### 🕒 Hypothèse planning")
                     st.markdown(f"- Planning indice : **{planning_indice or '…'}**")
 
@@ -2276,8 +2314,8 @@ elif menu == "Dashboard":
 
                 h3, h4 = st.columns(2)
                 with h3:
-                    # ---------- Hypothèses de l’étude ----------
-                    st.markdown("### 📄 Hypothèses de l’étude")
+                    # Hypothèses de l'étude
+                    st.markdown("### 📄 Hypothèses de l'étude")
                     st.markdown("- regroupement du matériel en grandes catégories")
                     st.markdown(
                         "- conversion des conditionnements en équivalent palette "
@@ -2286,7 +2324,7 @@ elif menu == "Dashboard":
                     st.markdown("- 2 phases de travaux par étage : Production et Terminaux")
 
                 with h4:
-                    # ---------- Hypothèse de base par famille ----------
+                    # Hypothèse de base par famille
                     st.markdown("###  Hypothèse de base déportée par famille")
 
                     # Familles depuis Tableau Source ou Matériel
@@ -2340,7 +2378,7 @@ elif menu == "Dashboard":
                         f"{surface_totale_v0:,.0f}".replace(",", " "),
                     )
 
-                if str(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src.columns:
+                if _to_internal_lot(params.get("lot", "")).upper() == "GLOBAL" and "Lot" in src.columns:
                     p1_v0, p2_v0 = st.columns(2)
                     with p1_v0:
                         df_pal_lot_v0 = _plot_palettes_par_lot_pie(src, key="pie_palettes_lot_v0")
@@ -2356,59 +2394,60 @@ elif menu == "Dashboard":
                 # Deux graphiques côte à côte
                 c1, c2 = st.columns(2)
 
-                # --------------------------------------------------
                 # Palettes par famille (Tableau Source)
-                # --------------------------------------------------
                 with c1:
                     st.markdown("#### Palettes par famille")
                     col_fam = (
                         _find_col(src.columns, "Nom de l'element")
-                        or _find_col(src.columns, "Nom de l'élément")
-                        or _find_col(src.columns, "Nom de l'élement")
+                        or _find_col(src.columns, "Nom de l'element")
+                        or _find_col(src.columns, "Nom de l'element")
                     )
                     col_pal_eq = _find_col(src.columns, "Nombre palettes equivalent total")
                     if col_fam and col_pal_eq:
-                        df_fam_pal = src[[col_fam, col_pal_eq]].copy()
-                        df_fam_pal = df_fam_pal.dropna(subset=[col_fam])
-                        df_fam_pal = df_fam_pal[
-                            ~df_fam_pal[col_fam].astype(str).str.lower().str.startswith("stock ccc")
+                        df_fam_ref = pd.DataFrame({
+                            "Famille": src[col_fam].dropna().astype(str).str.strip().unique()
+                        })
+                        df_fam_ref = df_fam_ref[df_fam_ref["Famille"] != ""]
+                        df_fam_ref = df_fam_ref[
+                            ~df_fam_ref["Famille"].str.lower().str.startswith("stock ccc")
                         ]
-                        df_fam_pal[col_pal_eq] = pd.to_numeric(
-                            df_fam_pal[col_pal_eq], errors="coerce"
-                        ).fillna(0)
+
+                        df_fam_pal = src[[col_fam, col_pal_eq]].copy()
+                        df_fam_pal[col_fam] = df_fam_pal[col_fam].astype(str).str.strip()
+                        df_fam_pal[col_pal_eq] = pd.to_numeric(df_fam_pal[col_pal_eq], errors="coerce").fillna(0)
                         df_fam_pal = (
                             df_fam_pal.groupby(col_fam, as_index=False)[col_pal_eq]
                             .sum()
-                            .sort_values(col_pal_eq, ascending=False)
+                            .rename(columns={col_fam: "Famille", col_pal_eq: "Palettes"})
                         )
+
+                        df_fam_pal = (
+                            df_fam_ref.merge(df_fam_pal, on="Famille", how="left")
+                            .fillna({"Palettes": 0})
+                            .sort_values("Palettes", ascending=False)
+                        )
+
                         fig_fam_pal = px.bar(
                             df_fam_pal,
-                            x=col_pal_eq,
-                            y=col_fam,
+                            x="Palettes",
+                            y="Famille",
                             orientation="h",
-                            color=col_fam,
-                            color_discrete_sequence=[
-                                "#F4A261",
-                                "#2A9D8F",
-                                "#E76F51",
-                                "#264653",
-                                "#8AB17D",
-                                "#F1C453",
-                                "#6D597A",
-                            ],
+                            color="Palettes",
+                            color_continuous_scale=["#EAF4F4", "#2A9D8F", "#1D3557"],
+                            text="Palettes",
                         )
+                        fig_fam_pal.update_traces(texttemplate="%{x:.0f}", textposition="outside")
                         fig_fam_pal.update_layout(
-                            showlegend=False,
                             yaxis={"categoryorder": "total ascending"},
                             margin=dict(l=10, r=10, t=20, b=10),
+                            coloraxis_showscale=False,
+                            height=max(320, min(1400, 34 * len(df_fam_pal))),
                         )
                         st.plotly_chart(fig_fam_pal, key="palettes_famille_v0", use_container_width=True)
                     else:
                         st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
-                # --------------------------------------------------
                 # Flux mensuel de palettes + PIC (V0)
-                # --------------------------------------------------
                 with c2:
                     st.markdown("#### Flux mensuel de palettes")
 
@@ -2461,9 +2500,7 @@ elif menu == "Dashboard":
                         key="flux_palettes_v0",
                     )
 
-                # --------------------------------------------------
                 # Répartition par étage / zone
-                # --------------------------------------------------
                 c3, c4 = st.columns(2)
                 with c3:
                     st.markdown("#### Répartition des palettes par étage / zone")
@@ -2501,9 +2538,7 @@ elif menu == "Dashboard":
 
                 c2_, c3_ = st.columns(2)
 
-                # -----------------------------------------------------------
                 # CAMIONS PAR ÉTAGE / ZONE
-                # -----------------------------------------------------------
                 with c2_:
                     st.markdown("#### Camions par étage ")
                     fig_cam_zone = px.bar(
@@ -2521,9 +2556,7 @@ elif menu == "Dashboard":
                         key="cam_v0_zone",
                     )
 
-                # -----------------------------------------------------------
                 # FLUX MENSUEL CAMIONS (CORRIGÉ AVEC LIGNE HORIZONTALE)
-                # -----------------------------------------------------------
                 with c3_:
                     st.markdown("#### Flux mensuel de camions ")
 
@@ -2587,9 +2620,7 @@ elif menu == "Dashboard":
                         key="cam_v0_flux_pic",
                     )
 
-                # -----------------------------------------------------------
                 # REMPLISSAGE PAR ÉTAGE / ZONE
-                # -----------------------------------------------------------
                 c4, c5 = st.columns(2)
                 with c4:
                     st.markdown("#### Remplissage des camions par étage ")
@@ -2673,7 +2704,7 @@ elif menu == "Dashboard":
             key="type_variante_crea"
         )
 
-        # --- CRÉATION D'UNE NOUVELLE VARIANTE ---
+        # CRÉATION D'UNE NOUVELLE VARIANTE
         if st.button("Créer une variante"):
             vid = f"V{st.session_state['variant_counter']}"
 
@@ -2724,7 +2755,7 @@ elif menu == "Dashboard":
             st.session_state["variant_counter"] += 1
             st.success(f"Variante {vid} créée.")
 
-        # --- LISTE DES VARIANTES EXISTANTES 
+        # Liste des variantes existantes
         variants = st.session_state.get("variants", {})
 
         if not variants:
@@ -2762,7 +2793,7 @@ elif menu == "Dashboard":
                     st.info("Aucun fichier chargé pour cette variante.")
                     continue
 
-                # ---------- Lecture des feuilles du fichier VARIANTE ----------
+                # Lecture des feuilles du fichier VARIANTE
                 try:
                     excel_io_var = io.BytesIO(meta["bytes"])
                     xls_var = pd.ExcelFile(excel_io_var)
@@ -2774,7 +2805,7 @@ elif menu == "Dashboard":
                     st.error(f"Erreur lecture Excel pour {vid}: {e}")
                     continue
 
-                # ---------- Application du pipeline adapté ----------
+                # Application du pipeline adapté
                 if meta["with_ccc"]:
                     metrics_var = pipeline_avec_ccc(bg_var)
                 else:
@@ -2804,7 +2835,7 @@ elif menu == "Dashboard":
                     #  VARIANTE SANS CCC  → miroir du DASHBOARD V0
                     if not meta["with_ccc"]:
 
-                        # ---------------- HYPO V0----------------
+                        # HYPO V0
                         with ong_hyp_v:
                             st.markdown("### 📘 Hypothèses")
                             h1, h2 = st.columns(2)
@@ -2854,8 +2885,8 @@ elif menu == "Dashboard":
 
                             h3, h4 = st.columns(2)
                             with h3:
-                                # Hypothèses de l’étude (idem V0)
-                                st.markdown("#### 📄 Hypothèses de l’étude")
+                                # Hypothèses de l'étude (idem V0)
+                                st.markdown("#### 📄 Hypothèses de l'étude")
                                 st.markdown("- regroupement du matériel en grandes catégories")
                                 st.markdown(
                                     "- conversion des conditionnements en équivalent palette "
@@ -2900,7 +2931,7 @@ elif menu == "Dashboard":
                                     )
                                     st.dataframe(df_fam_v, use_container_width=True)
     
-                            # ---------------- PALETTES V0 (variante) ----------------
+                            # PALETTES V0 (variante)
                         with ong_pal_v:
                             st.markdown("### 📦 Palettes")
 
@@ -2923,44 +2954,49 @@ elif menu == "Dashboard":
                                 st.markdown("#### Palettes par famille")
                                 col_fam_v = (
                                     _find_col(src_var.columns, "Nom de l'element")
-                                    or _find_col(src_var.columns, "Nom de l'élément")
-                                    or _find_col(src_var.columns, "Nom de l'élement")
+                                    or _find_col(src_var.columns, "Nom de l'element")
+                                    or _find_col(src_var.columns, "Nom de l'element")
                                 )
                                 col_pal_eq_v = _find_col(src_var.columns, "Nombre palettes equivalent total")
                                 if col_fam_v and col_pal_eq_v:
-                                    df_fam_pal_v = src_var[[col_fam_v, col_pal_eq_v]].copy()
-                                    df_fam_pal_v = df_fam_pal_v.dropna(subset=[col_fam_v])
-                                    df_fam_pal_v = df_fam_pal_v[
-                                        ~df_fam_pal_v[col_fam_v].astype(str).str.lower().str.startswith("stock ccc")
+                                    df_fam_ref_v = pd.DataFrame({
+                                        "Famille": src_var[col_fam_v].dropna().astype(str).str.strip().unique()
+                                    })
+                                    df_fam_ref_v = df_fam_ref_v[df_fam_ref_v["Famille"] != ""]
+                                    df_fam_ref_v = df_fam_ref_v[
+                                        ~df_fam_ref_v["Famille"].str.lower().str.startswith("stock ccc")
                                     ]
-                                    df_fam_pal_v[col_pal_eq_v] = pd.to_numeric(
-                                        df_fam_pal_v[col_pal_eq_v], errors="coerce"
-                                    ).fillna(0)
+
+                                    df_fam_pal_v = src_var[[col_fam_v, col_pal_eq_v]].copy()
+                                    df_fam_pal_v[col_fam_v] = df_fam_pal_v[col_fam_v].astype(str).str.strip()
+                                    df_fam_pal_v[col_pal_eq_v] = pd.to_numeric(df_fam_pal_v[col_pal_eq_v], errors="coerce").fillna(0)
                                     df_fam_pal_v = (
                                         df_fam_pal_v.groupby(col_fam_v, as_index=False)[col_pal_eq_v]
                                         .sum()
-                                        .sort_values(col_pal_eq_v, ascending=False)
+                                        .rename(columns={col_fam_v: "Famille", col_pal_eq_v: "Palettes"})
                                     )
+
+                                    df_fam_pal_v = (
+                                        df_fam_ref_v.merge(df_fam_pal_v, on="Famille", how="left")
+                                        .fillna({"Palettes": 0})
+                                        .sort_values("Palettes", ascending=False)
+                                    )
+
                                     fig_fam_pal_v = px.bar(
                                         df_fam_pal_v,
-                                        x=col_pal_eq_v,
-                                        y=col_fam_v,
+                                        x="Palettes",
+                                        y="Famille",
                                         orientation="h",
-                                        color=col_fam_v,
-                                        color_discrete_sequence=[
-                                            "#F4A261",
-                                            "#2A9D8F",
-                                            "#E76F51",
-                                            "#264653",
-                                            "#8AB17D",
-                                            "#F1C453",
-                                            "#6D597A",
-                                        ],
+                                        color="Palettes",
+                                        color_continuous_scale=["#EAF4F4", "#2A9D8F", "#1D3557"],
+                                        text="Palettes",
                                     )
+                                    fig_fam_pal_v.update_traces(texttemplate="%{x:.0f}", textposition="outside")
                                     fig_fam_pal_v.update_layout(
-                                        showlegend=False,
                                         yaxis={"categoryorder": "total ascending"},
                                         margin=dict(l=10, r=10, t=20, b=10),
+                                        coloraxis_showscale=False,
+                                        height=max(320, min(1400, 34 * len(df_fam_pal_v))),
                                     )
                                     st.plotly_chart(
                                         fig_fam_pal_v,
@@ -3040,7 +3076,7 @@ elif menu == "Dashboard":
                             with c4:
                                 st.empty()
 
-                        # ---------------- CAMIONS V0 (variante) ----------------
+                        # CAMIONS V0 (variante)
                         with ong_cam_v:
                             st.markdown("### 🚚 Camions")
 
@@ -3147,9 +3183,7 @@ elif menu == "Dashboard":
                                     st.info("Aucune donnée de remplissage disponible pour cette variante.")
                             with c5:
                                 # Typologie camions (variante) – même info que V0
-                                # -------------------------------------------------------
                                 # 🚚 Typologie des camions – Variante Sans CCC (structure V0)
-                                # -------------------------------------------------------
 
                                 st.markdown("## 🚚 Typologie des camions ")
 
@@ -3200,7 +3234,7 @@ elif menu == "Dashboard":
 
                     #  VARIANTE AVEC CCC  → miroir du DASHBOARD V1
                     else:
-                        # ---------------- HYPO V1 (variante) ----------------
+                        # HYPO V1 (variante)
                         with ong_hyp_v:
                             st.markdown("### 📘 Hypothèses")
                             h1, h2 = st.columns(2)
@@ -3250,7 +3284,7 @@ elif menu == "Dashboard":
 
                             h3, h4 = st.columns(2)
                             with h3:
-                                st.markdown("#### 📄 Hypothèses de l’étude")
+                                st.markdown("#### 📄 Hypothèses de l'étude")
                                 st.markdown("- regroupement du matériel en grandes catégories")
                                 st.markdown("- conversion des conditionnements en équivalent palette")
                                 st.markdown("- 2 phases de travaux par étage")
@@ -3334,7 +3368,7 @@ elif menu == "Dashboard":
                                     "Colonnes nécessaires introuvables dans Tableau Source / Bilan Graphique de la variante."
                                 )
     
-                            # ---------------- PALETTES V1 (variante) ----------------
+                            # PALETTES V1 (variante)
                         with ong_pal_v:
                             st.markdown("### 📦 Palettes ")
 
@@ -3357,44 +3391,49 @@ elif menu == "Dashboard":
                                 st.markdown("#### Palettes par famille")
                                 col_fam_v = (
                                     _find_col(src_var.columns, "Nom de l'element")
-                                    or _find_col(src_var.columns, "Nom de l'élément")
-                                    or _find_col(src_var.columns, "Nom de l'élement")
+                                    or _find_col(src_var.columns, "Nom de l'element")
+                                    or _find_col(src_var.columns, "Nom de l'element")
                                 )
                                 col_pal_eq_v = _find_col(src_var.columns, "Nombre palettes equivalent total")
                                 if col_fam_v and col_pal_eq_v:
-                                    df_fam_pal_v = src_var[[col_fam_v, col_pal_eq_v]].copy()
-                                    df_fam_pal_v = df_fam_pal_v.dropna(subset=[col_fam_v])
-                                    df_fam_pal_v = df_fam_pal_v[
-                                        ~df_fam_pal_v[col_fam_v].astype(str).str.lower().str.startswith("stock ccc")
+                                    df_fam_ref_v = pd.DataFrame({
+                                        "Famille": src_var[col_fam_v].dropna().astype(str).str.strip().unique()
+                                    })
+                                    df_fam_ref_v = df_fam_ref_v[df_fam_ref_v["Famille"] != ""]
+                                    df_fam_ref_v = df_fam_ref_v[
+                                        ~df_fam_ref_v["Famille"].str.lower().str.startswith("stock ccc")
                                     ]
-                                    df_fam_pal_v[col_pal_eq_v] = pd.to_numeric(
-                                        df_fam_pal_v[col_pal_eq_v], errors="coerce"
-                                    ).fillna(0)
+
+                                    df_fam_pal_v = src_var[[col_fam_v, col_pal_eq_v]].copy()
+                                    df_fam_pal_v[col_fam_v] = df_fam_pal_v[col_fam_v].astype(str).str.strip()
+                                    df_fam_pal_v[col_pal_eq_v] = pd.to_numeric(df_fam_pal_v[col_pal_eq_v], errors="coerce").fillna(0)
                                     df_fam_pal_v = (
                                         df_fam_pal_v.groupby(col_fam_v, as_index=False)[col_pal_eq_v]
                                         .sum()
-                                        .sort_values(col_pal_eq_v, ascending=False)
+                                        .rename(columns={col_fam_v: "Famille", col_pal_eq_v: "Palettes"})
                                     )
+
+                                    df_fam_pal_v = (
+                                        df_fam_ref_v.merge(df_fam_pal_v, on="Famille", how="left")
+                                        .fillna({"Palettes": 0})
+                                        .sort_values("Palettes", ascending=False)
+                                    )
+
                                     fig_fam_pal_v = px.bar(
                                         df_fam_pal_v,
-                                        x=col_pal_eq_v,
-                                        y=col_fam_v,
+                                        x="Palettes",
+                                        y="Famille",
                                         orientation="h",
-                                        color=col_fam_v,
-                                        color_discrete_sequence=[
-                                            "#F4A261",
-                                            "#2A9D8F",
-                                            "#E76F51",
-                                            "#264653",
-                                            "#8AB17D",
-                                            "#F1C453",
-                                            "#6D597A",
-                                        ],
+                                        color="Palettes",
+                                        color_continuous_scale=["#EAF4F4", "#2A9D8F", "#1D3557"],
+                                        text="Palettes",
                                     )
+                                    fig_fam_pal_v.update_traces(texttemplate="%{x:.0f}", textposition="outside")
                                     fig_fam_pal_v.update_layout(
-                                        showlegend=False,
                                         yaxis={"categoryorder": "total ascending"},
                                         margin=dict(l=10, r=10, t=20, b=10),
+                                        coloraxis_showscale=False,
+                                        height=max(320, min(1400, 34 * len(df_fam_pal_v))),
                                     )
                                     st.plotly_chart(
                                         fig_fam_pal_v,
@@ -3494,7 +3533,7 @@ elif menu == "Dashboard":
                                     use_container_width=True,
                                 )
 
-                        # ---------------- CAMIONS V1 (variante) ----------------
+                        # CAMIONS V1 (variante)
                         with ong_cam_v:
                             st.markdown("### 🚚 Camions")
 
@@ -3596,9 +3635,7 @@ elif menu == "Dashboard":
 
                             with c4:
                                 # Typologie camions CCC (variante)
-                                # -------------------------------------------------------
                                 # 🚚 Typologie des camions – Variante Avec CCC (structure V1)
-                                # -------------------------------------------------------
 
                                 st.markdown("## 🚚 Typologie des camions")
 
@@ -3652,7 +3689,7 @@ elif menu == "Dashboard":
         with tab_comp:
             st.subheader("Comparatif multi-versions")
 
-            # --------- 1) Construire la liste de toutes les versions ---------
+            # 1) Construire la liste de toutes les versions
             all_versions = {
                 "V0": {"with_ccc": False, "source": "base"},
                 "V1": {"with_ccc": True,  "source": "base"},
@@ -3671,7 +3708,7 @@ elif menu == "Dashboard":
                 st.info("Aucune version disponible.")
                 st.stop()
 
-            # --------- 2) Choix des versions à comparer (multi-sélection) ---------
+            # 2) Choix des versions à comparer (multi-sélection)
             selected_versions = st.multiselect(
                 "Choisir les versions à comparer",
                 version_names,
@@ -3807,7 +3844,7 @@ elif menu == "Dashboard":
                     "cout_total": cout_total,
                 }
 
-            # --------- 4) Calcul des données pour toutes les versions sélectionnées ---------
+            # 4) Calcul des données pour toutes les versions sélectionnées
 
             data_versions = {}
             for v in selected_versions:
@@ -3962,19 +3999,19 @@ elif menu == "Dashboard":
                             unsafe_allow_html=True
                         )
 
-            # ---- ensuite viennent les onglets ----
+            # ensuite viennent les onglets
             ong_hyp_comp, ong_pal_comp, ong_cam_comp = st.tabs(["📘 Hypothèses", "📦 Palettes", "🚚 Camions"])
 
             with ong_hyp_comp:
                 h1, h2 = st.columns(2)
                 with h1:
-                    st.markdown("### 📘 Hypothèses de l’étude")
+                    st.markdown("### 📘 Hypothèses de l'étude")
                     st.markdown("- regroupement du matériel en grandes catégories")
                     st.markdown("- conversion en équivalent palette (1,2 × 0,8 m)")
                     st.markdown("- 2 phases par étage : Production & Terminaux")
 
                 with h2:
-                    # ---------- Paramètres CCC par version ----------
+                    # Paramètres CCC par version
                     st.markdown("### ⚙️ Paramètres CCC par version")
                     for v, dv in data_versions.items():
                         if not dv["with_ccc"]:
@@ -4041,12 +4078,12 @@ elif menu == "Dashboard":
                                 dv["bg"][["Désignation", "Production", "Terminaux"]]
                                 .dropna(subset=["Désignation"])
                                 .assign(
-                                    Quantité=lambda x: x["Production"].fillna(0)
+                                    Quantite=lambda x: x["Production"].fillna(0)
                                     + x["Terminaux"].fillna(0)
                                 )
-                                .groupby("Désignation", as_index=False)["Quantité"]
+                                .groupby("Désignation", as_index=False)["Quantite"]
                                 .sum()
-                                .rename(columns={"Désignation": "Famille"})
+                                .rename(columns={"Désignation": "Famille", "Quantite": "Quantité"})
                             )
                         else:
                             df_qty = pd.DataFrame(columns=["Famille", "Quantité"])
@@ -4303,15 +4340,16 @@ elif menu == "Entraînement modèles":
 
     # Liste des modèles disponibles
     models = [m.replace(".pkl", "") for m in os.listdir("models") if m.endswith(".pkl")]
-    if "GLOBAL" not in models:
-        models.insert(0, "GLOBAL")
+    models = ["TCE" if m == "GLOBAL" else m for m in models]
+    if "TCE" not in models:
+        models.insert(0, "TCE")
 
     model_name = st.selectbox("Étape 2 : Choisir le lot d'entraînement", models)
 
-    train_file = st.file_uploader("Déposez un fichier d’entraînement (xlsx)")
+    train_file = st.file_uploader("Déposez un fichier d'entraînement (xlsx)")
 
     if st.button("Lancer entraînement") and train_file:
-        msg = entmod.train_model(train_file, model_name)
+        msg = entmod.train_model(train_file, _to_internal_lot(model_name))
         st.success(msg)
 
 # Onglet 5 : Base de données : 
@@ -4322,9 +4360,11 @@ elif menu == "Base de données":
     # Choix table + lot
     table_choice = st.selectbox("Choisir une table", ["Matériel", "Conditionnement", "Camion"])
     models = [m.replace(".pkl", "") for m in os.listdir("models") if m.endswith(".pkl")]
-    if "GLOBAL" not in models:
-        models.insert(0, "GLOBAL")
+    models = ["TCE" if m == "GLOBAL" else m for m in models]
+    if "TCE" not in models:
+        models.insert(0, "TCE")
     lot_choice = st.selectbox("Modèle", models)
+    lot_choice_internal = _to_internal_lot(lot_choice)
 
     # Charger les données à la demande (comme Gradio)
     if "db_table_choice" not in st.session_state:
@@ -4335,9 +4375,9 @@ elif menu == "Base de données":
         st.session_state["db_df"] = None
 
     if st.button("Afficher les données"):
-        st.session_state["db_df"] = daba.afficher_donnees(table_choice, lot_choice)
+        st.session_state["db_df"] = daba.afficher_donnees(table_choice, lot_choice_internal)
         st.session_state["db_table_choice"] = table_choice
-        st.session_state["db_lot_choice"] = lot_choice
+        st.session_state["db_lot_choice"] = lot_choice_internal
 
     st.subheader("📝 Modifier la table")
 
@@ -4346,7 +4386,7 @@ elif menu == "Base de données":
         st.stop()
 
     if (st.session_state["db_table_choice"] != table_choice
-            or st.session_state["db_lot_choice"] != lot_choice):
+            or st.session_state["db_lot_choice"] != lot_choice_internal):
         st.warning("La table affichée ne correspond pas aux sélections actuelles. Rechargez les données.")
 
     df_modifie = st.data_editor(
@@ -4357,7 +4397,9 @@ elif menu == "Base de données":
     )
 
     if st.button("💾 Enregistrer les modifications"):
-        msg = daba.enregistrer_modifications(table_choice, df_modifie, lot_choice)
+        msg = daba.enregistrer_modifications(table_choice, df_modifie, lot_choice_internal)
         st.success(msg)
-        st.session_state["db_df"] = daba.afficher_donnees(table_choice, lot_choice)
+        st.session_state["db_df"] = daba.afficher_donnees(table_choice, lot_choice_internal)
         st.rerun()
+
+

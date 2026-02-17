@@ -343,7 +343,7 @@ def render_dashboard_excel():
     rempl_moyen_ccc = metrics_v1["rempl_moyen"]
     camions_zone_ccc = metrics_v1["camions_zone"].rename(columns={"Camions": "Total CCC"}) if not metrics_v1["camions_zone"].empty else pd.DataFrame(columns=["Étage - Zone", "Total CCC"])
 
-    # ---------- Hypothèses générales ----------
+    # Hypothèses générales
     lot_col = param.columns[1]  # même logique que ta macro
     try:
         nb_etages = param.loc[param["Lot"] == "Nombre étage :", lot_col].iloc[0]
@@ -419,7 +419,7 @@ def render_dashboard_excel():
             except Exception:
                 src_v1 = pd.DataFrame()
 
-            # ---------- 3 onglets internes : Hypothèses / Palettes / Camions ----------
+            # 3 onglets internes : Hypothèses / Palettes / Camions
             ong_hyp_v1, ong_pal_v1, ong_cam_v1 = st.tabs(
                 ["📘 Hypothèses", "📦 Palettes", "🚚 Camions"]
             )
@@ -557,7 +557,7 @@ def render_dashboard_excel():
 
                 c1, c2 = st.columns(2)
 
-                # -------- Palettes par famille (Tableau Source) --------
+                # Palettes par famille (Tableau Source)
                 with c1:
                     st.markdown("#### Palettes par famille")
                     col_fam = None
@@ -609,7 +609,7 @@ def render_dashboard_excel():
                     else:
                         st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
-                # -------- Flux palettes --------
+                # Flux palettes
                 with c2:
                     st.markdown("#### Flux mensuel de palettes")
 
@@ -664,7 +664,7 @@ def render_dashboard_excel():
                     )
 
 
-                # -------- Matériaux stockés en CCC + Répartition palettes --------
+                # Matériaux stockés en CCC + Répartition palettes
                 c3, c4 = st.columns(2)
                 with c3:
                     st.markdown("#### Matériaux stockés en CCC")
@@ -720,7 +720,7 @@ def render_dashboard_excel():
 
                 c1, c2 = st.columns(2)
 
-                # -------- Camions par zone --------
+                # Camions par zone
                 with c1:
                     st.markdown("#### Camions par étage")
                     if not camions_zone_ccc.empty:
@@ -734,7 +734,7 @@ def render_dashboard_excel():
                     else:
                         st.info("Colonnes camions CCC manquantes")
 
-                # -------- Flux camions CCC --------
+                # Flux camions CCC
                 with c2:
                     st.markdown("#### Flux mensuel de camions")
 
@@ -803,7 +803,7 @@ def render_dashboard_excel():
 
                 c_rempl_ccc, c_typo_ccc = st.columns(2)
                 with c_rempl_ccc:
-                    # -------- Remplissage CCC --------
+                    # Remplissage CCC
                     st.markdown("#### Remplissage par étage")
                     if not rempl_zone_ccc.empty:
                         x_col = None
@@ -890,7 +890,7 @@ def render_dashboard_excel():
                 st.markdown("### 📘 Hypothèses")
                 h1, h2 = st.columns(2)
                 with h1:
-                    # ---------- Document de source ----------
+                    # Document de source
                     st.markdown("### 📄 Document de source")
                     # Pre-remplissage DPGF + Indice a partir de dpgf_date et planning_indice
                     if dpgf_date and planning_indice:
@@ -909,7 +909,7 @@ def render_dashboard_excel():
                     )
                     st.file_uploader("Veuillez joindre le fichier PIC", key="pic_v0")
                 with h2:
-                    # ---------- Hypothèse planning ----------
+                    # Hypothèse planning
                     st.markdown("### 🕒 Hypothèse planning")
                     st.markdown(f"- Planning indice : **{planning_indice or 'N/A'}**")
                     planning_hyp = st.text_area(
@@ -929,13 +929,13 @@ def render_dashboard_excel():
                         )
                 h3, h4 = st.columns(2)
                 with h3:
-                    # ---------- Hypothèses de l’étude ----------
+                    # Hypothèses de l’étude
                     st.markdown("### 📄 Hypothèses de l’étude")
                     st.markdown("- regroupement du materiel en grandes categories")
                     st.markdown("- conversion des conditionnements en equivalent palette (palette europeenne 1,2 x 0,8)")
                     st.markdown("- 2 phases de travaux par etage : Production et Terminaux")
                 with h4:
-                    # ---------- Hypothese de base par famille ----------
+                    # Hypothese de base par famille
                     st.markdown("###  Hypothèse de base déportée par famille")
                     if "Nom de l'élément" in src.columns:
                         familles_src = (src["Nom de l'élément"].dropna().astype(str).sort_values().unique())
@@ -978,9 +978,7 @@ def render_dashboard_excel():
                 # Deux graphiques côte à côte
                 c1, c2 = st.columns(2)
 
-                # --------------------------------------------------
                 # Palettes par famille (Tableau Source)
-                # --------------------------------------------------
                 with c1:
                     st.markdown("#### Palettes par famille")
                     col_fam = None
@@ -1032,9 +1030,7 @@ def render_dashboard_excel():
                     else:
                         st.info("Colonnes famille/palettes introuvables dans Tableau Source.")
 
-                # --------------------------------------------------
                 # Flux mensuel de palettes + PIC (V0)
-                # --------------------------------------------------
                 with c2:
                     st.markdown("#### Flux mensuel de palettes")
 
@@ -1087,9 +1083,7 @@ def render_dashboard_excel():
                         key="flux_palettes_v0",
                     )
 
-                # --------------------------------------------------
                 # Répartition par étage / zone
-                # --------------------------------------------------
                 c3, c4 = st.columns(2)
                 with c3:
                     st.markdown("#### Répartition des palettes par étage / zone")
@@ -1129,9 +1123,7 @@ def render_dashboard_excel():
 
                 c2_, c3_ = st.columns(2)
 
-                # -----------------------------------------------------------
                 # CAMIONS PAR ÉTAGE / ZONE
-                # -----------------------------------------------------------
                 with c2_:
                     st.markdown("#### Camions par étage ")
                     fig_cam_zone = px.bar(
@@ -1149,9 +1141,7 @@ def render_dashboard_excel():
                         key="cam_v0_zone",
                     )
 
-                # -----------------------------------------------------------
                 # FLUX MENSUEL CAMIONS (CORRIGÉ AVEC LIGNE HORIZONTALE)
-                # -----------------------------------------------------------
                 with c3_:
                     st.markdown("#### Flux mensuel de camions ")
 
@@ -1215,9 +1205,7 @@ def render_dashboard_excel():
                         key="cam_v0_flux_pic",
                     )
 
-                # -----------------------------------------------------------
                 # REMPLISSAGE PAR ÉTAGE / ZONE
-                # -----------------------------------------------------------
                 c4, c5 = st.columns(2)
                 with c4:
                     st.markdown("#### Remplissage des camions par étage ")
@@ -1310,7 +1298,7 @@ def render_dashboard_excel():
             key="type_variante_crea"
         )
 
-        # --- CRÉATION D'UNE NOUVELLE VARIANTE ---
+        # CRÉATION D'UNE NOUVELLE VARIANTE
         if st.button("Créer une variante"):
             vid = f"V{st.session_state['variant_counter']}"
 
@@ -1361,7 +1349,7 @@ def render_dashboard_excel():
             st.session_state["variant_counter"] += 1
             st.success(f"Variante {vid} créée.")
 
-        # --- LISTE DES VARIANTES EXISTANTES 
+        # Liste des variantes existantes
         variants = st.session_state.get("variants", {})
 
         if not variants:
@@ -1399,7 +1387,7 @@ def render_dashboard_excel():
                     st.info("Aucun fichier chargé pour cette variante.")
                     continue
 
-                # ---------- Lecture des feuilles du fichier VARIANTE ----------
+                # Lecture des feuilles du fichier VARIANTE
                 try:
                     excel_io_var = io.BytesIO(meta["bytes"])
                     xls_var = pd.ExcelFile(excel_io_var)
@@ -1411,7 +1399,7 @@ def render_dashboard_excel():
                     st.error(f"Erreur lecture Excel pour {vid}: {e}")
                     continue
 
-                # ---------- Application du pipeline adapté ----------
+                # Application du pipeline adapté
                 if meta["with_ccc"]:
                     metrics_var = pipeline_avec_ccc(bg_var)
                 else:
@@ -1441,7 +1429,7 @@ def render_dashboard_excel():
                     #  VARIANTE SANS CCC  → miroir du DASHBOARD V0
                     if not meta["with_ccc"]:
 
-                        # ---------------- HYPO V0----------------
+                        # HYPO V0
                         with ong_hyp_v:
                             st.markdown("### 📘 Hypothèses")
                             h1, h2 = st.columns(2)
@@ -1537,7 +1525,7 @@ def render_dashboard_excel():
                                     )
                                     st.dataframe(df_fam_v, use_container_width=True)
     
-                            # ---------------- PALETTES V0 (variante) ----------------
+                            # PALETTES V0 (variante)
                         with ong_pal_v:
                             st.markdown("### 📦 Palettes")
 
@@ -1677,7 +1665,7 @@ def render_dashboard_excel():
                             with c4:
                                 st.empty()
 
-                        # ---------------- CAMIONS V0 (variante) ----------------
+                        # CAMIONS V0 (variante)
                         with ong_cam_v:
                             st.markdown("### 🚚 Camions")
 
@@ -1784,9 +1772,7 @@ def render_dashboard_excel():
                                     st.info("Aucune donnée de remplissage disponible pour cette variante.")
                             with c5:
                                 # Typologie camions (variante) – même info que V0
-                                # -------------------------------------------------------
                                 # 🚚 Typologie des camions – Variante Sans CCC (structure V0)
-                                # -------------------------------------------------------
 
                                 st.markdown("## 🚚 Typologie des camions ")
 
@@ -1837,7 +1823,7 @@ def render_dashboard_excel():
 
                     #  VARIANTE AVEC CCC  → miroir du DASHBOARD V1
                     else:
-                        # ---------------- HYPO V1 (variante) ----------------
+                        # HYPO V1 (variante)
                         with ong_hyp_v:
                             st.markdown("### 📘 Hypothèses")
                             h1, h2 = st.columns(2)
@@ -1971,7 +1957,7 @@ def render_dashboard_excel():
                                     "Colonnes nécessaires introuvables dans Tableau Source / Bilan Graphique de la variante."
                                 )
     
-                            # ---------------- PALETTES V1 (variante) ----------------
+                            # PALETTES V1 (variante)
                         with ong_pal_v:
                             st.markdown("### 📦 Palettes ")
 
@@ -2131,7 +2117,7 @@ def render_dashboard_excel():
                                     use_container_width=True,
                                 )
 
-                        # ---------------- CAMIONS V1 (variante) ----------------
+                        # CAMIONS V1 (variante)
                         with ong_cam_v:
                             st.markdown("### 🚚 Camions")
 
@@ -2233,9 +2219,7 @@ def render_dashboard_excel():
 
                             with c4:
                                 # Typologie camions CCC (variante)
-                                # -------------------------------------------------------
                                 # 🚚 Typologie des camions – Variante Avec CCC (structure V1)
-                                # -------------------------------------------------------
 
                                 st.markdown("## 🚚 Typologie des camions")
 
@@ -2289,7 +2273,7 @@ def render_dashboard_excel():
         with tab_comp:
             st.subheader("Comparatif multi-versions")
 
-            # --------- 1) Construire la liste de toutes les versions ---------
+            # 1) Construire la liste de toutes les versions
             all_versions = {
                 "V0": {"with_ccc": False, "source": "base"},
                 "V1": {"with_ccc": True,  "source": "base"},
@@ -2308,7 +2292,7 @@ def render_dashboard_excel():
                 st.info("Aucune version disponible.")
                 st.stop()
 
-            # --------- 2) Choix des versions à comparer (multi-sélection) ---------
+            # 2) Choix des versions à comparer (multi-sélection)
             selected_versions = st.multiselect(
                 "Choisir les versions à comparer",
                 version_names,
@@ -2438,7 +2422,7 @@ def render_dashboard_excel():
                     "cout_total": cout_total,
                 }
 
-            # --------- 4) Calcul des données pour toutes les versions sélectionnées ---------
+            # 4) Calcul des données pour toutes les versions sélectionnées
 
             data_versions = {}
             for v in selected_versions:
@@ -2563,7 +2547,7 @@ def render_dashboard_excel():
 
                 st.markdown("---")
 
-            # ---- ensuite viennent les onglets ----
+            # ensuite viennent les onglets
             ong_hyp_comp, ong_pal_comp, ong_cam_comp = st.tabs(["📘 Hypothèses", "📦 Palettes", "🚚 Camions"])
 
 
@@ -2574,7 +2558,7 @@ def render_dashboard_excel():
                 st.markdown("- conversion en équivalent palette (1,2 × 0,8 m)")
                 st.markdown("- 2 phases par étage : Production & Terminaux")
 
-                # ---------- Paramètres CCC par version ----------
+                # Paramètres CCC par version
                 st.markdown("### ⚙️ Paramètres CCC par version")
                 for v, dv in data_versions.items():
                     if not dv["with_ccc"]:

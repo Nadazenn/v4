@@ -228,7 +228,7 @@ def build_tableau_source(
         cur = conn.cursor()
 
         # Récupérer tables utiles
-        if str(lot).strip().upper() == "GLOBAL":
+        if str(lot).strip().upper() in {"GLOBAL", "TCE"}:
             cur.execute("SELECT * FROM materiel")
             materiel_rows = cur.fetchall()
         else:
@@ -331,7 +331,28 @@ def build_tableau_source(
         print(f"build_tableau_source: materiel_rows={len(materiel_rows)}, cond_rows={len(cond_rows)}, cam_rows={len(cam_rows)}")
         print(f"donnees_grid shape={donnees_grid.shape}")
 
-        has_lot_col = len(donnees_grid) > 1 and len(donnees_grid.columns) > 2 and str(donnees_grid.iloc[1, 2]).strip().lower() == "lot"
+        has_lot_col = False
+        if len(donnees_grid) > 1 and len(donnees_grid.columns) > 2:
+            # Cas nominal: en-tête explicite "Lot" en ligne 2 / colonne 3
+            has_lot_col = str(donnees_grid.iloc[1, 2]).strip().lower() == "lot"
+
+            # Fallback robuste: certains utilisateurs modifient la ligne d'en-tête dans la grille.
+            # En mode GLOBAL/TCE, on détecte la colonne lot via les valeurs de lots connues.
+            if not has_lot_col and str(lot).strip().upper() in {"GLOBAL", "TCE"} and len(donnees_grid.columns) > 4:
+                try:
+                    lots_connus = {
+                        _norm(r[2]) for r in materiel_rows
+                        if len(r) > 2 and r[2] not in (None, "")
+                    }
+                    lot_like = donnees_grid.iloc[3:, 2].astype(str).str.strip().map(_norm)
+                    lot_like = lot_like[lot_like != ""]
+                    qty_c3 = pd.to_numeric(donnees_grid.iloc[3:, 3], errors="coerce")
+
+                    if not lot_like.empty and lots_connus:
+                        ratio_match_lot = float(lot_like.isin(lots_connus).mean())
+                        has_lot_col = ratio_match_lot >= 0.8 and qty_c3.notna().sum() > 0
+                except Exception:
+                    has_lot_col = False
         lot_col_idx = 2 if has_lot_col else None
         cat_col_idx = 1
         zone_start_idx = 5 if has_lot_col else 4
@@ -366,7 +387,7 @@ def build_tableau_source(
                 mat = None
                 if lot_ligne:
                     mat = materiel_dict_by_lot.get((_norm(lot_ligne), key))
-                if not mat and lot and str(lot).strip().upper() != "GLOBAL":
+                if not mat and lot and str(lot).strip().upper() not in {"GLOBAL", "TCE"}:
                     mat = materiel_dict_by_lot.get((_norm(lot), key))
                 if not mat:
                     mat = materiel_dict.get(key)
@@ -453,6 +474,8 @@ def build_tableau_source(
                         & (df_rows['Phase de traveaux'] == phase)
                     )
                     total_pal = df_rows.loc[mask, 'Nombre palettes equivalent total'].sum()
+                    if total_pal <= 0:
+                        continue
 
                     # Créer ligne stock (même logique camions que VBA)
                     cond = cond_dict.get(_norm("Palette"))

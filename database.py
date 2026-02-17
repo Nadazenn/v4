@@ -19,7 +19,7 @@ def nom_table (table):
 def afficher_donnees(table, model_choice):
     table = nom_table (table)
     if table == "materiel" :
-        if str(model_choice).strip().upper() == "GLOBAL":
+        if str(model_choice).strip().upper() in {"GLOBAL", "TCE"}:
             query = f"SELECT * FROM {table}"
         else:
             query = f"SELECT * FROM {table} WHERE lot = '{model_choice}' "
@@ -59,7 +59,7 @@ def enregistrer_modifications(table, df_modifie, lot_choice=None):
 
     # Supprimer les anciennes lignes qui existent déjà dans la base
     if table == "materiel":
-        if lot_choice and str(lot_choice).strip().upper() != "GLOBAL":
+        if lot_choice and str(lot_choice).strip().upper() not in {"GLOBAL", "TCE"}:
             if "lot" in df_modifie.columns:
                 df_modifie["lot"] = df_modifie["lot"].fillna(lot_choice)
             else:
@@ -139,7 +139,7 @@ def ajouter_supportage(materiels_df, model_choice):
             df = pd.concat([df, pd.DataFrame(rows_to_add)], ignore_index=True)
     else:
         model_norm = _norm(model_choice)
-        if model_norm == "global":
+        if model_norm in {"global", "tce"}:
             noms = set(supportage_df["nom_norm"].dropna().tolist())
         else:
             noms = set(
