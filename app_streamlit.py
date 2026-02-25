@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 from datetime import date, datetime
 import os
@@ -4373,11 +4373,14 @@ elif menu == "Base de données":
         st.session_state["db_lot_choice"] = None
     if "db_df" not in st.session_state:
         st.session_state["db_df"] = None
+    if "db_editor_version" not in st.session_state:
+        st.session_state["db_editor_version"] = 0
 
     if st.button("Afficher les données"):
         st.session_state["db_df"] = daba.afficher_donnees(table_choice, lot_choice_internal)
         st.session_state["db_table_choice"] = table_choice
         st.session_state["db_lot_choice"] = lot_choice_internal
+        st.session_state["db_editor_version"] += 1
 
     st.subheader("📝 Modifier la table")
 
@@ -4388,18 +4391,20 @@ elif menu == "Base de données":
     if (st.session_state["db_table_choice"] != table_choice
             or st.session_state["db_lot_choice"] != lot_choice_internal):
         st.warning("La table affichée ne correspond pas aux sélections actuelles. Rechargez les données.")
+        st.stop()
 
     df_modifie = st.data_editor(
         st.session_state["db_df"],
         use_container_width=True,
         num_rows="dynamic",
-        key="crud_editor"
+        key=f"crud_editor_{st.session_state['db_editor_version']}"
     )
 
     if st.button("💾 Enregistrer les modifications"):
         msg = daba.enregistrer_modifications(table_choice, df_modifie, lot_choice_internal)
         st.success(msg)
         st.session_state["db_df"] = daba.afficher_donnees(table_choice, lot_choice_internal)
+        st.session_state["db_editor_version"] += 1
         st.rerun()
 
 

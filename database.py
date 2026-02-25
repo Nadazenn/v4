@@ -33,14 +33,8 @@ def enregistrer_modifications(table, df_modifie, lot_choice=None):
     table = nom_table (table)
     conn = sqlite3.connect("logistique.db", check_same_thread=False)
     
-    # Vérifier la clé unique (ex: "id" ou "nom")
+    # Charger l'état courant de la table
     df_base = pd.read_sql(f"SELECT * FROM {table}", conn)
-    if "id" in df_base.columns:
-        clé_unique = "id"
-    elif "nom" in df_base.columns:
-        clé_unique = "nom"
-    else:
-        return "Erreur : Impossible d'identifier une clé unique."
     if table == "materiel":
         df_modifie['quantite_par_conditionnement'] = pd.to_numeric(df_modifie['quantite_par_conditionnement'], errors='coerce')
         df_modifie['quantite_par_conditionnement_2'] = pd.to_numeric(df_modifie['quantite_par_conditionnement_2'], errors='coerce')
@@ -57,30 +51,41 @@ def enregistrer_modifications(table, df_modifie, lot_choice=None):
     if "nom" in df_modifie.columns:
         df_modifie = df_modifie[df_modifie["nom"].astype(str).str.strip() != ""]
 
-    # Supprimer les anciennes lignes qui existent déjà dans la base
-    if table == "materiel":
-        if lot_choice and str(lot_choice).strip().upper() not in {"GLOBAL", "TCE"}:
-            if "lot" in df_modifie.columns:
-                df_modifie["lot"] = df_modifie["lot"].fillna(lot_choice)
-            else:
-                df_modifie["lot"] = lot_choice
-            df_base = df_base[df_base["lot"] != lot_choice]
-        elif "lot" in df_modifie.columns and "lot" in df_base.columns:
-            lot_values = df_modifie["lot"].dropna().unique().tolist()
-            if lot_values:
-                df_base = df_base[~df_base["lot"].isin(lot_values)]
+    # Générer un id pour les nouvelles lignes si besoin
+    if "id" in df_base.columns and "id" in df_modifie.columns:
+        df_base["id"] = pd.to_numeric(df_base["id"], errors="coerce")
+        df_modifie["id"] = pd.to_numeric(df_modifie["id"], errors="coerce")
+        max_id = int(df_base["id"].max()) if df_base["id"].notna().any() else 0
+        missing_id = df_modifie["id"].isna()
+        if missing_id.any():
+            new_ids = list(range(max_id + 1, max_id + 1 + int(missing_id.sum())))
+            df_modifie.loc[missing_id, "id"] = new_ids
+
+    # Construire l'état final :
+    # - materiel par lot : on remplace uniquement le lot chargé
+    # - autres cas : on remplace tout ce qui était affiché (suppression persistante)
+    if table == "materiel" and lot_choice and str(lot_choice).strip().upper() not in {"GLOBAL", "TCE"}:
+        if "lot" in df_modifie.columns:
+            df_modifie["lot"] = lot_choice
         else:
-            df_base = df_base[~df_base[clé_unique].isin(df_modifie[clé_unique])]
+            df_modifie["lot"] = lot_choice
+        df_final = pd.concat([df_base[df_base["lot"] != lot_choice], df_modifie], ignore_index=True)
     else:
-        df_base = df_base[~df_base[clé_unique].isin(df_modifie[clé_unique])]
+        df_final = df_modifie.copy()
 
-    # Ajouter les nouvelles données mises à jour
-    df_final = pd.concat([df_base, df_modifie]).reset_index(drop=True)
+    # Garder l'ordre des colonnes SQL
+    if not df_base.empty:
+        for col in df_base.columns:
+            if col not in df_final.columns:
+                df_final[col] = None
+        df_final = df_final[df_base.columns]
 
-    # Remplacer la table dans la base de données
-    df_final.to_sql(table, conn, if_exists="replace", index=False)
+    # Conserver le schéma SQL (PK/autoincrement) en vidant puis en réinsérant
+    conn.execute(f"DELETE FROM {table}")
+    df_final.to_sql(table, conn, if_exists="append", index=False)
 
     conn.commit()
+    conn.close()
 
     return f"La table {table} a été mise à jour avec succès."
 
