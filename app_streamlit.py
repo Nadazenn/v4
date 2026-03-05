@@ -578,14 +578,31 @@ elif menu == "Pilotage Excel":
         st.error("Planning detaille manquant ou vide.")
         st.stop()
 
+    def _df_signature(df: pd.DataFrame) -> str:
+        if df is None:
+            return "none"
+        return str(int(pd.util.hash_pandas_object(df.astype(str), index=True).sum()))
+
+    upstream_signature = "|".join([
+        str(_to_internal_lot(params.get("lot", ""))),
+        _df_signature(st.session_state["bordereau_modifie"]),
+        _df_signature(planning),
+    ])
+
     if "pilotage" not in st.session_state:
         st.session_state["pilotage"] = {}
-    if "donnees_grid" not in st.session_state["pilotage"]:
+    if (
+        "donnees_grid" not in st.session_state["pilotage"]
+        or st.session_state["pilotage"].get("upstream_signature") != upstream_signature
+    ):
         st.session_state["pilotage"]["donnees_grid"] = pex.build_donnees_grid(
             st.session_state["bordereau_modifie"],
             planning,
             params.get("lot", "")
         )
+        st.session_state["pilotage"]["upstream_signature"] = upstream_signature
+        st.session_state["df_source"] = None
+        st.session_state["df_source_modif"] = None
 
     df_donnees = st.session_state["pilotage"]["donnees_grid"]
     df_display = df_donnees.astype(str)
@@ -683,6 +700,7 @@ elif menu == "Dashboard":
     import io
     st.header("📊 Études logistiques ")
     params = st.session_state.get("parametrage", None)
+    is_multi_lot_tce = _to_internal_lot((params or {}).get("lot", "")) == "GLOBAL"
     use_ccc = st.session_state.get("parametrage", {}).get("use_ccc", False)
     default_mode = 1 if not params else 0
     data_mode = st.radio(
@@ -693,6 +711,9 @@ elif menu == "Dashboard":
     )
 
     if data_mode == "Visualiser un anciens Dahsboard":
+        if is_multi_lot_tce:
+            st.warning("Cette fonctionnalité n'est pas encore disponible pour le cas multi-lot.")
+            st.stop()
         choix_ccc = st.radio(
             "As-tu utilisé une CCC ?",
             ["Oui", "Non"],
@@ -2706,6 +2727,9 @@ elif menu == "Dashboard":
 
         # CRÉATION D'UNE NOUVELLE VARIANTE
         if st.button("Créer une variante"):
+            if is_multi_lot_tce:
+                st.warning("Cette fonctionnalité n'est pas encore disponible pour le cas multi-lot.")
+                st.stop()
             vid = f"V{st.session_state['variant_counter']}"
 
             # Détection du format XLSX / XLSM à partir du fichier d'origine

@@ -6,6 +6,24 @@ import os
 conn = sqlite3.connect("logistique.db", check_same_thread=False) 
 cursor = conn.cursor()
 
+QTY_COLUMNS_MATERIEL = [
+    "quantite_par_conditionnement",
+    "quantite_par_conditionnement_2",
+    "quantite_par_conditionnement_3",
+]
+
+
+def _coerce_nullable_nonneg_float_columns(df: pd.DataFrame, columns) -> pd.DataFrame:
+    for col in columns:
+        if col in df.columns:
+            df[col] = _to_numeric_loose(df[col]).clip(lower=0)
+    return df
+
+
+def _to_numeric_loose(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series.astype(str).str.replace(",", ".", regex=False), errors="coerce")
+
+
 def nom_table (table):
     if table == "Matériel":
         table = "materiel"
@@ -26,6 +44,18 @@ def afficher_donnees(table, model_choice):
     else :
         query = f"SELECT * FROM {table}"
     df = pd.read_sql(query, conn)
+    if table == "materiel":
+        df = _coerce_nullable_nonneg_float_columns(df, QTY_COLUMNS_MATERIEL)
+    if table == "conditionnement":
+        if "nombre_equiv_palettes" in df.columns:
+            df["nombre_equiv_palettes"] = _to_numeric_loose(df["nombre_equiv_palettes"]).clip(lower=0)
+        if "masse_max" in df.columns:
+            df["masse_max"] = (
+                _to_numeric_loose(df["masse_max"])
+                .round()
+                .clip(lower=0)
+                .astype("Int64")
+            )
     return df
 
 # Fonction pour enregistrer les modifications
@@ -36,12 +66,18 @@ def enregistrer_modifications(table, df_modifie, lot_choice=None):
     # Charger l'état courant de la table
     df_base = pd.read_sql(f"SELECT * FROM {table}", conn)
     if table == "materiel":
-        df_modifie['quantite_par_conditionnement'] = pd.to_numeric(df_modifie['quantite_par_conditionnement'], errors='coerce')
-        df_modifie['quantite_par_conditionnement_2'] = pd.to_numeric(df_modifie['quantite_par_conditionnement_2'], errors='coerce')
-        df_modifie['quantite_par_conditionnement_3'] = pd.to_numeric(df_modifie['quantite_par_conditionnement_3'], errors='coerce')
+        df_modifie = _coerce_nullable_nonneg_float_columns(df_modifie, QTY_COLUMNS_MATERIEL)
     if table == "conditionnement":
-        df_modifie['nombre_equiv_palettes'] = pd.to_numeric(df_modifie['nombre_equiv_palettes'], errors='coerce')
-        df_modifie['masse_max'] = pd.to_numeric(df_modifie['masse_max'], errors='coerce')
+        df_modifie["nombre_equiv_palettes"] = (
+            _to_numeric_loose(df_modifie["nombre_equiv_palettes"])
+            .clip(lower=0)
+        )
+        df_modifie["masse_max"] = (
+            _to_numeric_loose(df_modifie["masse_max"])
+            .round()
+            .clip(lower=0)
+            .astype("Int64")
+        )
     if table == "camion":
         df_modifie['capacite_palette'] = pd.to_numeric(df_modifie['capacite_palette'], errors='coerce')
         df_modifie['capacite_m3'] = pd.to_numeric(df_modifie['capacite_m3'], errors='coerce')
